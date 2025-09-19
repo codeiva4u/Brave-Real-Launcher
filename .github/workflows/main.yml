@@ -72,8 +72,37 @@ jobs:
       run: |
         echo "🔍 Checking for chrome-launcher updates..."
         
-        # Chrome-launcher की latest version fetch करें
-        CHROME_VERSION=$(curl -s https://api.github.com/repos/GoogleChrome/chrome-launcher/releases/latest | jq -r .tag_name | sed 's/v//')
+        # Chrome-launcher की latest version fetch करें with error handling
+        echo "🔍 Fetching chrome-launcher latest release..."
+        
+        # Fetch chrome-launcher version with multiple methods
+        CHROME_VERSION=""
+        
+        # Method 1: Try GitHub API
+        if command -v jq >/dev/null 2>&1; then
+          CHROME_API_RESPONSE=$(curl -s "https://api.github.com/repos/GoogleChrome/chrome-launcher/releases/latest")
+          if echo "$CHROME_API_RESPONSE" | jq -e '.tag_name' >/dev/null 2>&1; then
+            CHROME_VERSION=$(echo "$CHROME_API_RESPONSE" | jq -r .tag_name | sed 's/v//')
+            echo "✅ Found chrome-launcher version via GitHub API: $CHROME_VERSION"
+          fi
+        fi
+        
+        # Method 2: Fallback to NPM registry
+        if [ -z "$CHROME_VERSION" ] || [ "$CHROME_VERSION" = "null" ]; then
+          echo "⚠️ GitHub API failed, trying NPM registry..."
+          CHROME_VERSION=$(curl -s "https://registry.npmjs.org/chrome-launcher/latest" | jq -r .version 2>/dev/null || echo "")
+          if [ -n "$CHROME_VERSION" ] && [ "$CHROME_VERSION" != "null" ]; then
+            echo "✅ Found chrome-launcher version via NPM: $CHROME_VERSION"
+          fi
+        fi
+        
+        # Method 3: Final fallback - use current version
+        if [ -z "$CHROME_VERSION" ] || [ "$CHROME_VERSION" = "null" ]; then
+          echo "⚠️ All methods failed, using current version as fallback"
+          CHROME_VERSION=$(node -e "console.log(require('./package.json').version)")
+          echo "📦 Fallback to current version: $CHROME_VERSION"
+        fi
+        
         CURRENT_VERSION=$(node -e "console.log(require('./package.json').version)")
         
         echo "chrome_version=$CHROME_VERSION" >> $GITHUB_OUTPUT
@@ -102,10 +131,27 @@ jobs:
     - name: 🔄 Sync with Chrome-Launcher
       if: steps.sync-check.outputs.should_sync == 'true'
       run: |
-        echo "🔄 Syncing brave-real-launcher with chrome-launcher v${{ steps.sync-check.outputs.chrome_version }}"
+        echo "🔢 Syncing brave-real-launcher with chrome-launcher v${{ steps.sync-check.outputs.chrome_version }}"
+        
+        # Validate chrome version before using it
+        CHROME_VER="${{ steps.sync-check.outputs.chrome_version }}"
+        if [ "$CHROME_VER" = "null" ] || [ -z "$CHROME_VER" ]; then
+          echo "❌ Invalid chrome version detected: $CHROME_VER"
+          echo "🔄 Skipping sync due to invalid version"
+          exit 0
+        fi
+        
+        # Validate version format (should be x.y.z)
+        if ! echo "$CHROME_VER" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+          echo "❌ Invalid version format: $CHROME_VER"
+          echo "🔄 Skipping sync due to invalid version format"
+          exit 0
+        fi
+        
+        echo "✅ Valid chrome version: $CHROME_VER"
         
         # Package.json version को update करें
-        npm version ${{ steps.sync-check.outputs.chrome_version }} --no-git-tag-version
+        npm version "$CHROME_VER" --no-git-tag-version
         
         # Git configuration
         git config user.name "🤖 Brave Sync Bot"
@@ -208,12 +254,27 @@ jobs:
         SHOULD_PUBLISH="false"
         REASON=""
         
-        # Current और NPM version check करें
+        # Current और NPM version check करें with better error handling
         CURRENT_VERSION=$(node -e "console.log(require('./package.json').version)")
+        
+        echo "📎 Checking NPM registry..."
         NPM_VERSION=$(npm view brave-real-launcher version 2>/dev/null || echo "0.0.0")
         
-        echo "Current version: $CURRENT_VERSION"
+        # Handle npm registry errors
+        if [ "$NPM_VERSION" = "0.0.0" ]; then
+          echo "⚠️ Package not found on NPM or registry error - first publish"
+        else
+          echo "📦 Found published version on NPM: $NPM_VERSION"
+        fi
+        
+        echo "Local version: $CURRENT_VERSION"
         echo "NPM version: $NPM_VERSION"
+        
+        # Version conflict check
+        if [ "$NPM_VERSION" != "0.0.0" ] && [ "$CURRENT_VERSION" = "$NPM_VERSION" ]; then
+          echo "⚠️ Version conflict detected: Local and NPM have same version"
+          echo "🔢 Will auto-increment if publishing is needed"
+        fi
         
         # Publish logic
         if [ "$PUBLISH_MODE" = "skip" ]; then
