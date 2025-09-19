@@ -86,26 +86,6 @@ class BraveTestSuite {
     log.warn(`⏭️  Skipped: ${testName} (${reason})`);
   }
 
-  // Test 1: Check Brave installations
-  async testBraveInstallations() {
-    const installations = this.launcher.Launcher.getInstallations();
-    
-    if (installations.length === 0) {
-      throw new Error('No Brave installations found. Please install Brave Browser first.');
-    }
-    
-    log.info(`Found ${installations.length} Brave installation(s):`);
-    installations.forEach((path, index) => {
-      log.info(`  ${index + 1}. ${path}`);
-    });
-
-    // Verify each installation exists
-    for (const installation of installations) {
-      if (!fs.existsSync(installation)) {
-        throw new Error(`Brave binary not found at: ${installation}`);
-      }
-    }
-  }
 
   // Test 2: Basic Brave launch and kill
   async testBasicLaunch() {

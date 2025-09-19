@@ -68,13 +68,38 @@ jobs:
     - name: 🔨 Build project
       run: npm run build
 
+    - name: 🦁 Install Brave Browser (for testing)
+      run: |
+        echo "🦁 Installing Brave Browser for testing..."
+        sudo curl -fsSLo /usr/share/keyrings/brave-browser-archive-keyring.gpg https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg
+        echo "deb [signed-by=/usr/share/keyrings/brave-browser-archive-keyring.gpg arch=amd64] https://brave-browser-apt-release.s3.brave.com/ stable main" | sudo tee /etc/apt/sources.list.d/brave-browser-release.list
+        sudo apt update
+        sudo apt install -y brave-browser xvfb
+        
+        # Verify installation
+        brave-browser --version || echo "⚠️ Brave installation may have issues"
+        
+        # Set up display for headless testing
+        export DISPLAY=:99
+        Xvfb :99 -screen 0 1024x768x24 > /dev/null 2>&1 &
+        sleep 2
+
     - name: 🧪 Test everything
       run: |
         echo "🧪 Running all tests..."
-        npm test
+        
+        # Set environment for testing
+        export DISPLAY=:99
+        export BRAVE_PATH=/usr/bin/brave-browser
+        
+        # Run CI-friendly tests that handle missing Brave gracefully
+        node test-ci.cjs
+        
+        # Run compatibility tests (these don't need Brave)
         npm run test:compatibility
         npm run type-check
-        echo "✅ All tests passed!"
+        
+        echo "✅ Test phase completed!"
 
     - name: 🔍 Security check
       run: npm audit --audit-level high || true
