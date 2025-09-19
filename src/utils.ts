@@ -54,6 +54,11 @@ export class ChromeNotInstalledError extends LauncherError {
   code = LaunchErrorCodes.ERR_LAUNCHER_NOT_INSTALLED;
 }
 
+export class BraveNotInstalledError extends LauncherError {
+  message = 'No Brave Browser installations found.';
+  code = LaunchErrorCodes.ERR_LAUNCHER_NOT_INSTALLED;
+}
+
 export function getPlatform() {
   return isWsl ? 'wsl' : process.platform;
 }

@@ -7,10 +7,10 @@
  */
 'use strict';
 
-/** @fileoverview Prints the Chrome path that chrome-launcher will use. */
+/** @fileoverview Prints the Brave Browser path that brave-real-launcher will use. */
 
-const {getChromePath} = require('../dist/chrome-launcher.js');
+const {getBravePath} = require('../dist/chrome-launcher.js');
 
-const chromePath = getChromePath();
-process.stdout.write(chromePath);
+const bravePath = getBravePath();
+process.stdout.write(bravePath);
 process.exit(0);

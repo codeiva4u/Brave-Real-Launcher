@@ -8,13 +8,14 @@
 import * as childProcess from 'child_process';
 import * as fs from 'fs';
 import * as net from 'net';
-import * as chromeFinder from './chrome-finder.js';
+import * as braveFinder from './brave-finder.js';
 import {getRandomPort} from './random-port.js';
 import {DEFAULT_FLAGS} from './flags.js';
-import {makeTmpDir, defaults, delay, getPlatform, toWin32Path, InvalidUserDataDirectoryError, UnsupportedPlatformError, ChromeNotInstalledError} from './utils.js';
+import {makeTmpDir, defaults, delay, getPlatform, toWin32Path, InvalidUserDataDirectoryError, UnsupportedPlatformError, BraveNotInstalledError} from './utils.js';
 import {ChildProcess} from 'child_process';
 import {spawn, spawnSync} from 'child_process';
 import log from 'lighthouse-logger';
+import {XvfbSupport, XvfbOptions} from './xvfb-support.js';
 
 const isWsl = getPlatform() === 'wsl';
 const isWindows = getPlatform() === 'win32';
@@ -42,19 +43,28 @@ export interface Options {
   connectionPollInterval?: number;
   maxConnectionRetries?: number;
   envVars?: {[key: string]: string|undefined};
+  // New Brave-specific options
+  headless?: boolean;
+  autoDetectDisplay?: boolean;
+  xvfbOptions?: XvfbOptions;
+  enableXvfb?: boolean;
 }
 
 export interface RemoteDebuggingPipes {
   incoming: NodeJS.ReadableStream, outgoing: NodeJS.WritableStream,
 }
 
-export interface LaunchedChrome {
+export interface LaunchedBrave {
   pid: number;
   port: number;
   process: ChildProcess;
   remoteDebuggingPipes: RemoteDebuggingPipes|null;
+  xvfb?: XvfbSupport;
   kill: () => void;
 }
+
+// Keep legacy interface for compatibility
+export interface LaunchedChrome extends LaunchedBrave {}
 
 export interface ModuleOverrides {
   fs?: typeof fs;
@@ -66,12 +76,32 @@ const sigintListener = () => {
   process.exit(_SIGINT_EXIT_CODE);
 };
 
-async function launch(opts: Options = {}): Promise<LaunchedChrome> {
+async function launch(opts: Options = {}): Promise<LaunchedBrave> {
   opts.handleSIGINT = defaults(opts.handleSIGINT, true);
+
+  // Auto-detect and setup Xvfb if needed on Linux
+  let xvfb: XvfbSupport | undefined;
+  if (getPlatform() === 'linux') {
+    const shouldEnableXvfb = opts.enableXvfb !== false && 
+                            (opts.enableXvfb === true || 
+                             opts.autoDetectDisplay !== false && XvfbSupport.shouldUseXvfb());
+    
+    if (shouldEnableXvfb) {
+      try {
+        xvfb = await XvfbSupport.create(opts.xvfbOptions);
+        log.log('BraveLauncher', `Started Xvfb on display ${xvfb.getDisplayString()}`);
+      } catch (err) {
+        log.warn('BraveLauncher', `Failed to start Xvfb: ${err.message}`);
+        if (opts.enableXvfb === true) {
+          throw err; // Re-throw if explicitly requested
+        }
+      }
+    }
+  }
 
   const instance = new Launcher(opts);
 
-  // Kill spawned Chrome process in case of ctrl-C.
+  // Kill spawned Brave process in case of ctrl-C.
   if (opts.handleSIGINT && instances.size === 0) {
     process.on(_SIGINT, sigintListener);
   }
@@ -85,6 +115,9 @@ async function launch(opts: Options = {}): Promise<LaunchedChrome> {
       process.removeListener(_SIGINT, sigintListener);
     }
     instance.kill();
+    if (xvfb) {
+      xvfb.stop();
+    }
   };
 
   return {
@@ -92,15 +125,16 @@ async function launch(opts: Options = {}): Promise<LaunchedChrome> {
     port: instance.port!,
     process: instance.chromeProcess!,
     remoteDebuggingPipes: instance.remoteDebuggingPipes,
+    xvfb,
     kill,
   };
 }
 
-/** Returns Chrome installation path that chrome-launcher will launch by default. */
-function getChromePath(): string {
+/** Returns Brave installation path that brave-launcher will launch by default. */
+function getBravePath(): string {
   const installation = Launcher.getFirstInstallation();
   if (!installation) {
-    throw new ChromeNotInstalledError();
+    throw new BraveNotInstalledError();
   }
   return installation;
 }
@@ -122,7 +156,7 @@ function killAll(): Array<Error> {
 
 class Launcher {
   private tmpDirandPidFileReady = false;
-  private pidFile: string;
+  private pidFile!: string; // Will be initialized in makeTmpDir
   private startingUrl: string;
   private outFile?: number;
   private errFile?: number;
@@ -139,6 +173,7 @@ class Launcher {
   private spawn: typeof childProcess.spawn;
   private useDefaultProfile: boolean;
   private envVars: {[key: string]: string|undefined};
+  private headless: boolean;
 
   chromeProcess?: childProcess.ChildProcess;
   userDataDir?: string;
@@ -163,6 +198,7 @@ class Launcher {
     this.connectionPollInterval = defaults(this.opts.connectionPollInterval, 500);
     this.maxConnectionRetries = defaults(this.opts.maxConnectionRetries, 50);
     this.envVars = defaults(opts.envVars, Object.assign({}, process.env));
+    this.headless = defaults(this.opts.headless, false);
 
     if (typeof this.opts.userDataDir === 'boolean') {
       if (!this.opts.userDataDir) {
@@ -198,7 +234,17 @@ class Launcher {
       flags.push(`--user-data-dir=${isWsl ? toWin32Path(this.userDataDir) : this.userDataDir}`);
     }
 
-    if (process.env.HEADLESS) flags.push('--headless');
+    // Handle headless mode - prefer explicit option over environment variable
+    if (this.headless || process.env.HEADLESS) {
+      flags.push('--headless');
+      // Add additional headless-friendly flags
+      if (!this.chromeFlags.some(flag => flag.startsWith('--disable-gpu'))) {
+        flags.push('--disable-gpu');
+      }
+      if (!this.chromeFlags.some(flag => flag.startsWith('--no-sandbox'))) {
+        flags.push('--no-sandbox');
+      }
+    }
 
     flags.push(...this.chromeFlags);
     flags.push(this.startingUrl);
@@ -210,15 +256,15 @@ class Launcher {
     return DEFAULT_FLAGS.slice();
   }
 
-  /** Returns the highest priority chrome installation. */
+  /** Returns the highest priority brave installation. */
   static getFirstInstallation() {
-    if (getPlatform() === 'darwin') return chromeFinder.darwinFast();
-    return chromeFinder[getPlatform() as SupportedPlatforms]()[0];
+    if (getPlatform() === 'darwin') return braveFinder.darwinFast();
+    return braveFinder[getPlatform() as SupportedPlatforms]()[0];
   }
 
-  /** Returns all available chrome installations in decreasing priority order. */
+  /** Returns all available brave installations in decreasing priority order. */
   static getInstallations() {
-    return chromeFinder[getPlatform() as SupportedPlatforms]();
+    return braveFinder[getPlatform() as SupportedPlatforms]();
   }
 
   // Wrapper function to enable easy testing.
@@ -282,8 +328,8 @@ class Launcher {
       try {
         await this.isDebuggerReady();
         log.log(
-            'ChromeLauncher',
-            `Found existing Chrome already running using port ${this.port}, using that.`);
+            'BraveLauncher',
+            `Found existing Brave already running using port ${this.port}, using that.`);
         return;
       } catch (err) {
         if (this.portStrictMode) {
@@ -291,14 +337,14 @@ class Launcher {
         }
 
         log.log(
-            'ChromeLauncher',
-            `No debugging port found on port ${this.port}, launching a new Chrome.`);
+            'BraveLauncher',
+            `No debugging port found on port ${this.port}, launching a new Brave.`);
       }
     }
     if (this.chromePath === undefined) {
       const installation = Launcher.getFirstInstallation();
       if (!installation) {
-        throw new ChromeNotInstalledError();
+        throw new BraveNotInstalledError();
       }
 
       this.chromePath = installation;
@@ -491,4 +537,4 @@ class Launcher {
 };
 
 export default Launcher;
-export {Launcher, launch, killAll, getChromePath};
+export {Launcher, launch, killAll, getBravePath};
