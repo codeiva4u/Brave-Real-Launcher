@@ -8,6 +8,8 @@ export {
   launch,
   killAll,
   getBravePath,
+  getInstallations,
+  findBrave,
   Launcher as BraveLauncher,
   Options,
   LaunchedBrave,

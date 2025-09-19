@@ -52,7 +52,7 @@ class CITestSuite {
       let installations = [];
       
       try {
-        installations = this.launcher.Launcher.getInstallations();
+        installations = this.launcher.getInstallations();
       } catch (braveError) {
         // If Brave detection fails, check if we have Chromium as fallback
         const fs = require('fs');
@@ -153,11 +153,11 @@ class CITestSuite {
       throw new Error('launch function not available');
     }
     
-    if (typeof this.launcher.Launcher?.getInstallations !== 'function') {
+    if (typeof this.launcher.getInstallations !== 'function') {
       throw new Error('getInstallations function not available');
     }
     
-    if (typeof this.launcher.Launcher?.defaultFlags !== 'function') {
+    if (typeof this.launcher.BraveLauncher?.defaultFlags !== 'function') {
       throw new Error('defaultFlags function not available');
     }
     
@@ -166,7 +166,7 @@ class CITestSuite {
 
   // Test 2: API structure test (doesn't require Brave)
   async testAPIStructure() {
-    const defaultFlags = this.launcher.Launcher.defaultFlags();
+    const defaultFlags = this.launcher.BraveLauncher.defaultFlags();
     
     if (!Array.isArray(defaultFlags)) {
       throw new Error('defaultFlags should return an array');

@@ -559,3 +559,12 @@ class Launcher {
 
 export default Launcher;
 export {Launcher, launch, killAll, getBravePath};
+
+// Convenience functions for browser detection
+export function getInstallations() {
+  return Launcher.getInstallations();
+}
+
+export function findBrave() {
+  return Launcher.getFirstInstallation();
+}

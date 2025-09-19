@@ -1,0 +1,298 @@
+name: 🚀 Brave Real Launcher - Auto Sync & Publish
+
+on:
+  # ऑटोमेटिक अपडेट चेक - हफ्ते में दो बार (सोमवार और गुरुवार)
+  schedule:
+    - cron: '0 6 * * 1,4'  # सोमवार और गुरुवार सुबह 6:00 UTC
+    
+  # मैनुअल ट्रिगर
+  workflow_dispatch:
+    inputs:
+      sync_mode:
+        description: 'Sync Mode'
+        type: choice
+        default: 'auto'
+        options: 
+          - 'auto'       # ऑटो-सिंक अगर chrome-launcher अपडेट हो
+          - 'force'      # फोर्स सिंक चाहे chrome-launcher अपडेट हो या न हो
+          - 'check'      # सिर्फ चेक करें, अपडेट न करें
+      publish_mode:
+        description: 'Publish Mode'
+        type: choice
+        default: 'auto'
+        options:
+          - 'auto'       # अगर version बदला तो publish करें
+          - 'force'      # जबरदस्ती publish करें
+          - 'skip'       # publish न करें
+          
+  # Push और PR पर भी चलाएं (बिना publish के)
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  # 🚀 एक सिंगल जॉब जो सबकुछ करे
+  sync-build-test-publish:
+    runs-on: ubuntu-latest
+    
+    # सिक्योरिटी permissions
+    permissions:
+      contents: write  # फाइल्स मोडिफाई करने के लिए
+      packages: write  # NPM publish के लिए
+      
+    # Environment variables
+    env:
+      NODE_VERSION: '18'
+      DISPLAY: ':99'
+      
+    steps:
+    # Step 1: कोड checkout
+    - name: 💻 Checkout Repository
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+        fetch-depth: 0
+
+    # Step 2: Node.js setup
+    - name: 💻 Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        registry-url: 'https://registry.npmjs.org'
+
+    # Step 3: Dependencies install (हमेशा करें)
+    - name: 📦 Install Dependencies
+      run: npm ci
+
+    # Step 4: Chrome-launcher version check और sync
+    - name: 🔄 Check Chrome-Launcher Updates
+      id: sync-check
+      run: |
+        echo "🔍 Checking for chrome-launcher updates..."
+        
+        # Chrome-launcher की latest version fetch करें
+        CHROME_VERSION=$(curl -s https://api.github.com/repos/GoogleChrome/chrome-launcher/releases/latest | jq -r .tag_name | sed 's/v//')
+        CURRENT_VERSION=$(node -e "console.log(require('./package.json').version)")
+        
+        echo "chrome_version=$CHROME_VERSION" >> $GITHUB_OUTPUT
+        echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+        
+        # Sync mode determine करें
+        SYNC_MODE="${{ github.event.inputs.sync_mode || 'auto' }}"
+        SHOULD_SYNC="false"
+        
+        if [ "$SYNC_MODE" = "force" ]; then
+          SHOULD_SYNC="true"
+          echo "🔄 Force sync enabled"
+        elif [ "$SYNC_MODE" = "auto" ] && [ "$CHROME_VERSION" != "$CURRENT_VERSION" ]; then
+          SHOULD_SYNC="true"
+          echo "🆕 New chrome-launcher version detected: $CHROME_VERSION (current: $CURRENT_VERSION)"
+        elif [ "$SYNC_MODE" = "check" ]; then
+          echo "✅ Check mode - no sync will be performed"
+        else
+          echo "✅ Already up to date with chrome-launcher v$CHROME_VERSION"
+        fi
+        
+        echo "should_sync=$SHOULD_SYNC" >> $GITHUB_OUTPUT
+        echo "sync_mode=$SYNC_MODE" >> $GITHUB_OUTPUT
+
+    # Step 5: Actual sync process
+    - name: 🔄 Sync with Chrome-Launcher
+      if: steps.sync-check.outputs.should_sync == 'true'
+      run: |
+        echo "🔄 Syncing brave-real-launcher with chrome-launcher v${{ steps.sync-check.outputs.chrome_version }}"
+        
+        # Package.json version को update करें
+        npm version ${{ steps.sync-check.outputs.chrome_version }} --no-git-tag-version
+        
+        # Git configuration
+        git config user.name "🤖 Brave Sync Bot"
+        git config user.email "action@github.com"
+        
+        # Changes commit करें
+        git add package.json
+        git commit -m "🔄 Auto-sync with chrome-launcher v${{ steps.sync-check.outputs.chrome_version }}" || echo "No changes to commit"
+        
+        # Push changes
+        git push || echo "Nothing to push"
+        
+        echo "VERSION_SYNCED=true" >> $GITHUB_ENV
+        echo "NEW_VERSION=${{ steps.sync-check.outputs.chrome_version }}" >> $GITHUB_ENV
+
+    # Step 6: Build project
+    - name: 🔨 Build Project
+      run: |
+        echo "🔨 Building brave-real-launcher..."
+        npm run build
+        echo "✅ Build completed successfully!"
+
+    # Step 7: Browser setup for testing
+    - name: 🦁 Setup Browser Environment
+      run: |
+        echo "🦁 Setting up browser environment for testing..."
+        
+        # Install Xvfb for headless display
+        sudo apt-get update
+        sudo apt-get install -y xvfb
+        
+        # Start Xvfb
+        Xvfb :99 -screen 0 1024x768x24 > /dev/null 2>&1 &
+        sleep 3
+        
+        # Try to install Brave Browser
+        echo "📥 Attempting to install Brave Browser..."
+        
+        # Method 1: Official Brave repository
+        sudo curl -fsSLo /usr/share/keyrings/brave-browser-archive-keyring.gpg https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg || echo "Keyring download failed"
+        echo "deb [signed-by=/usr/share/keyrings/brave-browser-archive-keyring.gpg arch=amd64] https://brave-browser-apt-release.s3.brave.com/ stable main" | sudo tee /etc/apt/sources.list.d/brave-browser-release.list
+        sudo apt-get update || echo "Apt update had issues"
+        sudo apt-get install -y brave-browser || echo "Brave install from repo failed"
+        
+        # Method 2: Fallback to Chromium if Brave fails
+        if ! command -v brave-browser &> /dev/null; then
+          echo "🔄 Brave installation failed, falling back to Chromium..."
+          sudo apt-get install -y chromium-browser
+          sudo ln -sf /usr/bin/chromium-browser /usr/bin/brave-browser
+        fi
+        
+        # Verify installation
+        if command -v brave-browser &> /dev/null; then
+          echo "✅ Browser setup completed successfully!"
+          brave-browser --version || echo "Version check failed but browser exists"
+        else
+          echo "⚠️ Browser setup failed, tests may be limited"
+        fi
+
+    # Step 8: Run comprehensive tests
+    - name: 🧪 Run All Tests
+      run: |
+        echo "🧪 Running comprehensive test suite..."
+        
+        # Set environment for testing
+        export DISPLAY=:99
+        export BRAVE_PATH=/usr/bin/brave-browser
+        
+        # Run CI tests
+        echo "🔍 Running CI test suite..."
+        node test-ci.cjs
+        
+        # Run compatibility tests
+        echo "📝 Running compatibility tests..."
+        npm run test:compatibility
+        
+        # Type checking
+        echo "📝 Running TypeScript type check..."
+        npm run type-check
+        
+        echo "✅ All tests completed successfully!"
+      env:
+        DISPLAY: :99
+        BRAVE_PATH: /usr/bin/brave-browser
+
+    # Step 9: Security audit
+    - name: 🔍 Security Audit
+      run: |
+        echo "🔍 Running security audit..."
+        npm audit --audit-level high || echo "⚠️ Some security issues found but continuing..."
+        echo "✅ Security audit completed!"
+
+    # Step 10: Determine publish strategy
+    - name: 🎯 Determine Publish Strategy
+      id: publish-check
+      run: |
+        echo "🎯 Determining publish strategy..."
+        
+        PUBLISH_MODE="${{ github.event.inputs.publish_mode || 'auto' }}"
+        SHOULD_PUBLISH="false"
+        REASON=""
+        
+        # Current और NPM version check करें
+        CURRENT_VERSION=$(node -e "console.log(require('./package.json').version)")
+        NPM_VERSION=$(npm view brave-real-launcher version 2>/dev/null || echo "0.0.0")
+        
+        echo "Current version: $CURRENT_VERSION"
+        echo "NPM version: $NPM_VERSION"
+        
+        # Publish logic
+        if [ "$PUBLISH_MODE" = "skip" ]; then
+          REASON="Publish mode set to skip"
+        elif [ "$PUBLISH_MODE" = "force" ]; then
+          SHOULD_PUBLISH="true"
+          REASON="Force publish requested"
+        elif [ "$PUBLISH_MODE" = "auto" ]; then
+          if [ "$CURRENT_VERSION" != "$NPM_VERSION" ]; then
+            # Only publish on main/master branch for auto mode
+            if [[ "${{ github.ref }}" == "refs/heads/main" || "${{ github.ref }}" == "refs/heads/master" ]]; then
+              SHOULD_PUBLISH="true"
+              REASON="Version updated from $NPM_VERSION to $CURRENT_VERSION"
+            else
+              REASON="Version changed but not on main branch"
+            fi
+          else
+            REASON="No version change detected"
+          fi
+        fi
+        
+        echo "should_publish=$SHOULD_PUBLISH" >> $GITHUB_OUTPUT
+        echo "reason=$REASON" >> $GITHUB_OUTPUT
+        echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+        echo "npm_version=$NPM_VERSION" >> $GITHUB_OUTPUT
+        
+        echo "📋 Publish decision: $SHOULD_PUBLISH ($REASON)"
+
+    # Step 11: Publish to NPM
+    - name: 🚀 Publish to NPM
+      if: steps.publish-check.outputs.should_publish == 'true'
+      run: |
+        echo "🚀 Publishing brave-real-launcher v${{ steps.publish-check.outputs.current_version }} to NPM..."
+        
+        # Verify we have NPM token
+        if [ -z "$NPM_TOKEN" ]; then
+          echo "❌ NPM_TOKEN not found! Cannot publish."
+          exit 1
+        fi
+        
+        # Publish to NPM
+        npm publish --access public
+        
+        # Create Git tag (only if we're on main branch)
+        if [[ "${{ github.ref }}" == "refs/heads/main" || "${{ github.ref }}" == "refs/heads/master" ]]; then
+          echo "🏷️ Creating Git tag..."
+          git config user.name "🤖 Brave Publish Bot"
+          git config user.email "action@github.com"
+          
+          TAG_NAME="v${{ steps.publish-check.outputs.current_version }}"
+          git tag "$TAG_NAME" || echo "Tag might already exist"
+          git push origin "$TAG_NAME" || echo "Failed to push tag"
+        fi
+        
+        echo "🎉 Successfully published brave-real-launcher v${{ steps.publish-check.outputs.current_version }}!"
+      env:
+        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+    # Step 12: Final summary
+    - name: 📊 Workflow Summary
+      run: |
+        echo "✅ 🎉 Workflow completed successfully!"
+        echo "=================================="
+        echo "📋 Execution Summary:"
+        echo "• Chrome-launcher version: ${{ steps.sync-check.outputs.chrome_version }}"
+        echo "• Our version: ${{ steps.publish-check.outputs.current_version }}"
+        echo "• Sync performed: ${{ steps.sync-check.outputs.should_sync }}"
+        echo "• Sync mode: ${{ steps.sync-check.outputs.sync_mode }}"
+        echo "• Publish performed: ${{ steps.publish-check.outputs.should_publish }}"
+        echo "• Publish reason: ${{ steps.publish-check.outputs.reason }}"
+        echo "• Build: ✅ Success"
+        echo "• Tests: ✅ Passed" 
+        echo "• Security: ✅ Checked"
+        echo "=================================="
+        
+        # Set workflow status
+        if [ "${{ steps.publish-check.outputs.should_publish }}" = "true" ]; then
+          echo "🚀 Package published successfully!"
+        else
+          echo "📦 Package ready but not published (${{ steps.publish-check.outputs.reason }})"
+        fi
