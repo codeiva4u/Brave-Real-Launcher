@@ -38,8 +38,16 @@ function processFiles(dir, baseDir = dir) {
       let content = fs.readFileSync(fullPath, 'utf8');
       
       // Fix import/export statements to use .mjs extensions
+      // Step 1: Replace .js extensions with .mjs
       content = content.replace(/from ['"]\.\/([^'"]+)\.js['"]/g, "from './$1.mjs'");
-      content = content.replace(/from ['"]\.\/([^'"]+)['"]/g, "from './$1.mjs'");
+      
+      // Step 2: Add .mjs to imports without any extension
+      content = content.replace(/from ['"]\.\/([^'"]*?)(?<!\.mjs|\.js)['"]/g, "from './$1.mjs'");
+      
+      // Step 3: Fix any potential double .mjs.mjs extensions
+      content = content.replace(/\.mjs\.mjs/g, '.mjs');
+      
+      // Keep CommonJS requires as .js
       content = content.replace(/require\(['"]\.\/([^'"]+)\.js['"]\)/g, "require('./$1.js')");
       
       // Calculate relative path for output
