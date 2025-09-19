@@ -1,0 +1,99 @@
+name: Daily Chrome-launcher Sync Check
+
+on:
+  # Daily check at 2 AM UTC
+  schedule:
+    - cron: '0 2 * * *'
+  
+  # Manual trigger
+  workflow_dispatch:
+    inputs:
+      force_update:
+        description: 'Force update even if versions match'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  check-for-updates:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Check chrome-launcher version
+        id: version_check
+        run: |
+          # Get current version
+          CURRENT_VERSION=$(node -p "require('./package.json').version")
+          echo "Current brave-real-launcher version: $CURRENT_VERSION"
+          
+          # Get latest chrome-launcher version
+          CHROME_VERSION=$(npm view chrome-launcher version)
+          echo "Latest chrome-launcher version: $CHROME_VERSION"
+          
+          # Compare versions
+          if [ "$CURRENT_VERSION" != "$CHROME_VERSION" ]; then
+            echo "🆕 New version available: $CHROME_VERSION"
+            echo "update_needed=true" >> $GITHUB_OUTPUT
+            echo "new_version=$CHROME_VERSION" >> $GITHUB_OUTPUT
+          else
+            echo "✅ Already up to date"
+            echo "update_needed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create update issue
+        if: steps.version_check.outputs.update_needed == 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const newVersion = '${{ steps.version_check.outputs.new_version }}';
+            const title = `🔄 Chrome-launcher update available: v${newVersion}`;
+            const body = `
+            ## 🆕 New chrome-launcher version detected
+            
+            - **Current version**: ${{ steps.version_check.outputs.current_version }}
+            - **New version**: ${newVersion}
+            - **Detection time**: ${new Date().toISOString()}
+            
+            ### 🔧 Actions needed:
+            1. Review changes in chrome-launcher v${newVersion}
+            2. Update brave-real-launcher compatibility
+            3. Run tests across all platforms
+            4. Publish updated version to NPM
+            
+            ### 📋 Checklist:
+            - [ ] Review upstream changes
+            - [ ] Update dependencies
+            - [ ] Test Brave detection
+            - [ ] Test Xvfb functionality
+            - [ ] Verify cross-platform compatibility
+            - [ ] Update documentation
+            - [ ] Publish to NPM
+            
+            > **Note**: This issue was automatically created by the daily sync workflow.
+            `;
+            
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: title,
+              body: body,
+              labels: ['enhancement', 'sync', 'chrome-launcher']
+            });
+
+      - name: Log status
+        run: |
+          if [ "${{ steps.version_check.outputs.update_needed }}" == "true" ]; then
+            echo "📋 Update issue created for version ${{ steps.version_check.outputs.new_version }}"
+          else
+            echo "✅ No updates needed - versions are synchronized"
+          fi
+          
+          echo "🏁 Daily sync check completed successfully"
