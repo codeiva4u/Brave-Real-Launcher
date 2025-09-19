@@ -25,10 +25,18 @@ function copyAndRenameCJS() {
     const destPath = path.join(distDir, cjsFileName);
     
     try {
-      fs.copyFileSync(srcPath, destPath);
-      console.log(`✅ Copied ${file} -> ${cjsFileName}`);
+      // Read the file content
+      let content = fs.readFileSync(srcPath, 'utf8');
+      
+      // Fix the import/require references to use .cjs extensions
+      content = content.replace(/require\("\.\/([^"]+)\.js"\)/g, 'require("./$1.cjs")');
+      content = content.replace(/require\('\.\/([^']+)\.js'\)/g, "require('./$1.cjs')");
+      
+      // Write the corrected content
+      fs.writeFileSync(destPath, content);
+      console.log(`✅ Copied and fixed ${file} -> ${cjsFileName}`);
     } catch (err) {
-      console.error(`❌ Failed to copy ${file}:`, err.message);
+      console.error(`❌ Failed to process ${file}:`, err.message);
     }
   }
   
