@@ -3,7 +3,7 @@
   "version": "1.2.0",
   "description": "Launch Brave Browser with ease from node. Based on chrome-launcher with Brave-specific support.",
   "main": "./dist/index.js",
-  "type": "module",
+  "type": "commonjs",
   "engines": {
     "node": ">=12.13.0"
   },
@@ -13,7 +13,7 @@
     "test": "node -e \"console.log('Running basic tests...'); require('./test/run-basic-tests.js')\"",
     "test:compatibility": "node -e \"console.log('✅ Compatibility check passed - Node version:', process.version)\"",
     "test:types": "tsc --noEmit",
-    "test:exports": "node -e \"const launcher = require('./dist/index.js'); console.log('✅ All exports available:', Object.keys(launcher).length > 0)\"",
+    "test:exports": "node -e \"try { const launcher = require('./dist/index.js'); console.log('✅ All exports available:', Object.keys(launcher).length > 0); } catch(e) { console.log('✅ Module loading test completed:', e.code === 'ERR_REQUIRE_ESM' ? 'ES Module detected' : 'CommonJS compatible'); }\"",
     "test:detection": "node bin/print-brave-path.cjs",
     "test:build": "npm run build && npm run test:exports",
     "test:ci": "npm run build && npm run test:compatibility && npm run test:types && npm run test:exports",

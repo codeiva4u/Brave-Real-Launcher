@@ -1,0 +1,156 @@
+name: Build Test and Publish
+
+on:
+  # Manual trigger
+  workflow_dispatch:
+    inputs:
+      force_publish:
+        description: 'Force publish to NPM'
+        required: false
+        default: false
+        type: boolean
+      
+  # Automatic trigger on push to main  
+  push:
+    branches: [ main ]
+  
+  # Pull request testing
+  pull_request:
+    branches: [ main ]
+
+env:
+  NODE_VERSION: '18'
+
+jobs:
+  build-and-test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node-version: [16, 18, 20]
+        
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run compatibility check
+        run: |
+          echo "📝 Running compatibility and type checks..."
+          npm run test:compatibility
+
+      - name: TypeScript compilation
+        run: npm run build
+
+      - name: Type check
+        run: npm run test:types
+
+      - name: Test module exports
+        run: npm run test:exports
+
+      - name: Test browser detection (optional)
+        continue-on-error: true
+        run: |
+          echo "🦁 Testing browser detection..."
+          node bin/print-brave-path.cjs || echo "⚠️ Browser detection test completed (expected in CI)"
+
+      - name: Setup Xvfb (Linux only)
+        if: matrix.os == 'ubuntu-latest' && matrix.node-version == '18'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb xdpyinfo
+
+      - name: Test Xvfb (Linux only)
+        if: matrix.os == 'ubuntu-latest' && matrix.node-version == '18'
+        continue-on-error: true
+        run: |
+          echo "🐧 Testing Xvfb..."
+          node -e "
+            const { XvfbManager } = require('./dist/index.js');
+            
+            async function testXvfb() {
+              try {
+                const xvfb = new XvfbManager({ display: ':99' });
+                await xvfb.start();
+                console.log('✅ Xvfb test passed');
+                await xvfb.stop();
+              } catch (error) {
+                console.log('⚠️ Xvfb test completed:', error.message);
+              }
+            }
+            
+            testXvfb();
+          "
+
+      - name: Test summary
+        run: |
+          echo "🎉 Build and tests completed successfully!"
+          echo "Platform: ${{ matrix.os }}"
+          echo "Node.js: ${{ matrix.node-version }}"
+
+  publish:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.force_publish == 'true'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build for production
+        run: npm run build
+
+      - name: Run pre-publish tests
+        run: npm run test:ci
+
+      - name: Publish to NPM
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          CURRENT_VERSION=$(node -e "console.log(require('./package.json').version)")
+          echo "🚀 Publishing brave-real-launcher v$CURRENT_VERSION to NPM..."
+          npm publish --access public
+          echo "✅ Successfully published to NPM!"
+
+  check-updates:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.force_publish != 'true')
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Check for chrome-launcher updates
+        run: |
+          CURRENT_VERSION=$(node -e "console.log(require('./package.json').version)")
+          CHROME_VERSION=$(npm view chrome-launcher version)
+          
+          echo "Current brave-real-launcher: $CURRENT_VERSION"
+          echo "Latest chrome-launcher: $CHROME_VERSION"
+          
+          if [ "$CURRENT_VERSION" != "$CHROME_VERSION" ]; then
+            echo "🆕 New version available: $CHROME_VERSION"
+            echo "💡 To update: Run this workflow manually with 'Force publish' enabled"
+          else
+            echo "✅ Already synchronized with latest chrome-launcher"
+          fi
