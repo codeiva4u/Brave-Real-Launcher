@@ -131,6 +131,12 @@ jobs:
       - name: Install Dependencies
         run: npm ci
 
+      - name: Clean up duplicate chrome files
+        run: |
+          echo "🧹 Cleaning up any duplicate chrome files..."
+          node scripts/cleanup-duplicates.cjs
+          echo "✅ Pre-sync cleanup completed"
+
       - name: Sync Chrome-launcher & Auto-increment Version
         id: sync
         run: |

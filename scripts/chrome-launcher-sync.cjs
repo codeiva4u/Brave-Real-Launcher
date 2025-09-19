@@ -156,39 +156,32 @@ class ChromeLauncherSyncManager {
   async integrateChromeLauncher() {
     console.log('🔄 Integrating chrome-launcher code...');
     
-    const chromeSrcFiles = [
-      'src/chrome-finder.ts',
-      'src/chrome-launcher.ts',
-      'src/flags.ts',
-      'src/random-port.ts',
-      'src/utils.ts'
-    ];
+    // Clean up any existing chrome-chrome-* files to prevent conflicts
+    await this.cleanupDuplicateFiles();
     
-    // Copy chrome-launcher source files with new names to avoid conflicts
-    chromeSrcFiles.forEach(file => {
-      const srcPath = path.join(this.tempDir, file);
-      const fileName = path.basename(file, '.ts');
-      const destPath = path.join(this.projectRoot, 'src', `chrome-${fileName}.ts`);
-      
-      if (fs.existsSync(srcPath)) {
-        fs.copyFileSync(srcPath, destPath);
-        console.log(`  ✅ Integrated: ${file} → chrome-${fileName}.ts`);
-      }
-    });
+    // Since we're now using version increment logic instead of full integration,
+    // we'll just copy essential reference files and update dependencies
     
-    // Copy other important files
-    const otherFiles = ['package.json', 'README.md'];
-    otherFiles.forEach(file => {
-      const srcPath = path.join(this.tempDir, file);
-      const destPath = path.join(this.projectRoot, `chrome-launcher-${file}`);
-      
-      if (fs.existsSync(srcPath)) {
-        fs.copyFileSync(srcPath, destPath);
-        console.log(`  ✅ Reference: ${file} → chrome-launcher-${file}`);
-      }
-    });
+    // Copy package.json for dependency reference
+    const chromePkgSrc = path.join(this.tempDir, 'package.json');
+    const chromePkgDest = path.join(this.projectRoot, 'chrome-launcher-package.json');
     
-    console.log('✅ Chrome-launcher code integrated');
+    if (fs.existsSync(chromePkgSrc)) {
+      fs.copyFileSync(chromePkgSrc, chromePkgDest);
+      console.log(`  ✅ Reference: package.json → chrome-launcher-package.json`);
+    }
+    
+    // Copy README for reference
+    const chromeReadmeSrc = path.join(this.tempDir, 'README.md');
+    const chromeReadmeDest = path.join(this.projectRoot, 'chrome-launcher-README.md');
+    
+    if (fs.existsSync(chromeReadmeSrc)) {
+      fs.copyFileSync(chromeReadmeSrc, chromeReadmeDest);
+      console.log(`  ✅ Reference: README.md → chrome-launcher-README.md`);
+    }
+    
+    console.log('✅ Chrome-launcher reference files integrated');
+    console.log('ℹ️ Full code integration skipped - using version increment approach');
   }
 
   async restoreBraveFeatures() {
@@ -318,7 +311,8 @@ class ChromeLauncherSyncManager {
       { name: 'Brave Finder', file: 'src/brave-finder.ts' },
       { name: 'Brave Flags', file: 'src/flags.ts' },
       { name: 'Index Exports', file: 'src/index.ts' },
-      { name: 'Chrome Integration', file: 'src/chrome-chrome-launcher.ts' }
+      { name: 'Utils', file: 'src/utils.ts' },
+      { name: 'Chrome Reference', file: 'chrome-launcher-package.json', optional: true }
     ];
     
     let allGood = true;
@@ -326,6 +320,8 @@ class ChromeLauncherSyncManager {
     checks.forEach(check => {
       if (fs.existsSync(path.join(this.projectRoot, check.file))) {
         console.log(`  ✅ ${check.name}`);
+      } else if (check.optional) {
+        console.log(`  ℹ️ ${check.name} - Optional, not found`);
       } else {
         console.log(`  ❌ ${check.name} - Missing!`);
         allGood = false;
@@ -337,6 +333,52 @@ class ChromeLauncherSyncManager {
     }
     
     console.log('✅ Integration verified');
+  }
+
+  async cleanupDuplicateFiles() {
+    console.log('🧹 Cleaning up duplicate chrome files...');
+    
+    const srcDir = path.join(this.projectRoot, 'src');
+    const duplicatePatterns = [
+      'chrome-chrome-*.ts',
+      'chrome-chrome-*.js'
+    ];
+    
+    try {
+      duplicatePatterns.forEach(pattern => {
+        const files = require('glob').sync(pattern, { cwd: srcDir });
+        files.forEach(file => {
+          const fullPath = path.join(srcDir, file);
+          if (fs.existsSync(fullPath)) {
+            fs.unlinkSync(fullPath);
+            console.log(`  🗑️ Removed duplicate: ${file}`);
+          }
+        });
+      });
+      
+      console.log('✅ Duplicate files cleaned up');
+    } catch (e) {
+      // If glob is not available, use alternative approach
+      console.log('ℹ️ Using alternative cleanup method...');
+      this.alternativeCleanup();
+    }
+  }
+  
+  alternativeCleanup() {
+    const srcDir = path.join(this.projectRoot, 'src');
+    
+    try {
+      const files = fs.readdirSync(srcDir);
+      files.forEach(file => {
+        if (file.startsWith('chrome-chrome-') && file.endsWith('.ts')) {
+          const fullPath = path.join(srcDir, file);
+          fs.unlinkSync(fullPath);
+          console.log(`  🗑️ Removed duplicate: ${file}`);
+        }
+      });
+    } catch (e) {
+      console.log('⚠️ Alternative cleanup had issues:', e.message);
+    }
   }
 
   async cleanup() {

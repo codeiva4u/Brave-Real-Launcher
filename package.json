@@ -34,6 +34,8 @@
     "prepublishOnly": "npm run build && npm run test:ci",
     "sync-chrome-launcher": "node scripts/chrome-launcher-sync.cjs",
     "sync-chrome-launcher:version": "node scripts/chrome-launcher-sync.cjs",
+    "cleanup-duplicates": "node scripts/cleanup-duplicates.cjs",
+    "version-increment": "node scripts/version-increment.cjs",
     "reset-link": "echo \"Link reset completed\""
   },
   "bin": {
