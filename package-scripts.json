@@ -1,0 +1,36 @@
+{
+  "scripts": {
+    "sync": {
+      "description": "Sync with chrome-launcher",
+      "script": "node scripts/sync-chrome-launcher.cjs"
+    },
+    "check": {
+      "description": "Check for chrome-launcher updates",
+      "script": "node scripts/check-chrome-launcher-updates.cjs"
+    },
+    "build": {
+      "description": "Build TypeScript to both ESM and CJS",
+      "script": "npm run build:esm && npm run build:cjs"
+    },
+    "build:esm": {
+      "description": "Build ES modules",
+      "script": "tsc --module esnext --outDir dist/esm"
+    },
+    "build:cjs": {
+      "description": "Build CommonJS modules", 
+      "script": "tsc --module commonjs --outDir dist/cjs"
+    },
+    "test:all": {
+      "description": "Test both ESM and CJS builds",
+      "script": "npm run test:esm && npm run test:cjs"
+    },
+    "test:esm": {
+      "description": "Test ES modules build",
+      "script": "node --experimental-loader ts-node/esm test.cjs"
+    },
+    "test:cjs": {
+      "description": "Test CommonJS build",
+      "script": "node test.cjs"
+    }
+  }
+}
