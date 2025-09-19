@@ -133,11 +133,12 @@ jobs:
       env:
         DISPLAY: :99
         BRAVE_PATH: /usr/bin/brave-browser
-        
-        # Run compatibility tests (these don't need Brave)
+
+    - name: 📝 Run compatibility tests
+      run: |
+        echo "📝 Running compatibility and type checks..."
         npm run test:compatibility
         npm run type-check
-        
         echo "✅ Test phase completed!"
 
     - name: 🔍 Security check
