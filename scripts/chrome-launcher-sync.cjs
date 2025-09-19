@@ -187,14 +187,25 @@ class ChromeLauncherSyncManager {
   async restoreBraveFeatures() {
     console.log('🦁 Restoring and enhancing Brave features...');
     
-    // Restore all Brave-specific files
+    // Store current version before restoring
+    const currentVersion = this.getCurrentVersion();
+    console.log(`  📦 Preserving current version: ${currentVersion}`);
+    
+    // Restore all Brave-specific files except package.json (we'll handle it specially)
     if (fs.existsSync(this.backupDir)) {
-      execSync(`cp -r "${this.backupDir}"/* "${this.projectRoot}"/`);
-      console.log('  ✅ Brave-specific files restored');
+      const backupFiles = fs.readdirSync(this.backupDir);
+      backupFiles.forEach(file => {
+        if (file !== 'package.json') {
+          const srcPath = path.join(this.backupDir, file);
+          const destPath = path.join(this.projectRoot, file);
+          execSync(`cp -r "${srcPath}" "${destPath}"`);
+          console.log(`  ✅ Restored: ${file}`);
+        }
+      });
     }
     
-    // Merge package.json intelligently
-    await this.mergePackageJson();
+    // Merge package.json dependencies only (preserve current version)
+    await this.mergePackageJsonDependencies(currentVersion);
     
     // Enhance Brave files with chrome-launcher improvements
     await this.enhanceBraveFiles();
@@ -202,8 +213,21 @@ class ChromeLauncherSyncManager {
     console.log('✅ Brave features restored and enhanced');
   }
 
-  async mergePackageJson() {
-    console.log('📦 Merging package.json configurations...');
+  getCurrentVersion() {
+    try {
+      const bravePkgPath = path.join(this.projectRoot, 'package.json');
+      if (fs.existsSync(bravePkgPath)) {
+        const pkg = JSON.parse(fs.readFileSync(bravePkgPath, 'utf8'));
+        return pkg.version;
+      }
+    } catch (e) {
+      console.log('  ⚠️ Could not read current version');
+    }
+    return '1.2.0'; // fallback
+  }
+
+  async mergePackageJsonDependencies(preserveVersion) {
+    console.log('📦 Merging package.json dependencies (preserving version)...');
     
     const chromePkgPath = path.join(this.projectRoot, 'chrome-launcher-package.json');
     const bravePkgPath = path.join(this.projectRoot, 'package.json');
@@ -215,8 +239,8 @@ class ChromeLauncherSyncManager {
       // Merge dependencies (chrome-launcher deps take precedence for conflicts)
       bravePkg.dependencies = { ...bravePkg.dependencies, ...chromePkg.dependencies };
       
-      // Update version to chrome-launcher version
-      bravePkg.version = this.chromeVersion;
+      // PRESERVE CURRENT VERSION (don't overwrite with chrome version)
+      bravePkg.version = preserveVersion || bravePkg.version;
       
       // Keep our engines but merge if chrome-launcher has newer requirements
       if (chromePkg.engines) {
@@ -226,11 +250,13 @@ class ChromeLauncherSyncManager {
       // Save updated package.json
       fs.writeFileSync(bravePkgPath, JSON.stringify(bravePkg, null, 2));
       
-      console.log(`  ✅ Version updated: ${bravePkg.version}`);
-      console.log(`  ✅ Dependencies merged`);
+      console.log(`  ✅ Version preserved: ${bravePkg.version}`);
+      console.log(`  ✅ Dependencies merged from chrome-launcher`);
       
       // Remove temporary file
       fs.unlinkSync(chromePkgPath);
+    } else {
+      console.log('  ℹ️ No chrome-launcher package.json found, skipping dependency merge');
     }
   }
 
