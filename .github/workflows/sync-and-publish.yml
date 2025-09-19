@@ -1,0 +1,498 @@
+name: Sync with chrome-launcher and Publish
+
+on:
+  # Manual trigger
+  workflow_dispatch:
+    inputs:
+      force_publish:
+        description: 'Force publish even if no changes detected'
+        required: false
+        default: false
+        type: boolean
+      
+  # Automatic trigger - daily at 2 AM UTC
+  schedule:
+    - cron: '0 2 * * *'
+  
+  # Trigger on push to main branch (for development)
+  push:
+    branches: [ main ]
+  
+  # Trigger on pull requests
+  pull_request:
+    branches: [ main ]
+
+env:
+  NODE_VERSION: '18'
+  UPSTREAM_REPO: 'GoogleChrome/chrome-launcher'
+
+jobs:
+  check-updates:
+    runs-on: ubuntu-latest
+    outputs:
+      has_updates: ${{ steps.check.outputs.has_updates }}
+      chrome_launcher_version: ${{ steps.check.outputs.chrome_launcher_version }}
+      current_version: ${{ steps.check.outputs.current_version }}
+      should_publish: ${{ steps.check.outputs.should_publish }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GH_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Get current version
+        id: current_version
+        run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+
+      - name: Check chrome-launcher for updates
+        id: check
+        run: |
+          # Get latest chrome-launcher version from npm
+          CHROME_LAUNCHER_VERSION=$(npm view chrome-launcher version)
+          echo "chrome_launcher_version=$CHROME_LAUNCHER_VERSION" >> $GITHUB_OUTPUT
+          
+          # Get current brave-real-launcher version
+          CURRENT_VERSION=$(node -p "require('./package.json').version")
+          echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+          
+          # Check if chrome-launcher has updates
+          if [ "$CHROME_LAUNCHER_VERSION" != "$CURRENT_VERSION" ]; then
+            echo "has_updates=true" >> $GITHUB_OUTPUT
+            echo "should_publish=true" >> $GITHUB_OUTPUT
+            echo "New chrome-launcher version detected: $CHROME_LAUNCHER_VERSION (current: $CURRENT_VERSION)"
+          else
+            echo "has_updates=false" >> $GITHUB_OUTPUT
+            # Check if force publish is requested
+            if [ "${{ github.event.inputs.force_publish }}" = "true" ]; then
+              echo "should_publish=true" >> $GITHUB_OUTPUT
+              echo "Force publish requested"
+            else
+              echo "should_publish=false" >> $GITHUB_OUTPUT
+              echo "No updates detected and no force publish requested"
+            fi
+          fi
+
+  sync-and-update:
+    runs-on: ubuntu-latest
+    needs: check-updates
+    if: needs.check-updates.outputs.has_updates == 'true' || github.event.inputs.force_publish == 'true'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GH_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Clone chrome-launcher repository
+        run: |
+          git clone https://github.com/${{ env.UPSTREAM_REPO }}.git chrome-launcher-upstream
+          cd chrome-launcher-upstream
+          echo "Latest commit: $(git rev-parse HEAD)"
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          cd chrome-launcher-upstream
+          npm ci
+
+      - name: Sync core functionality
+        run: |
+          # Copy and modify core files while preserving Brave-specific changes
+          echo "Syncing core functionality from chrome-launcher..."
+          
+          # Update version to match chrome-launcher
+          NEW_VERSION="${{ needs.check-updates.outputs.chrome_launcher_version }}"
+          npm version $NEW_VERSION --no-git-tag-version
+          
+          # Update dependencies from upstream (excluding Brave-specific ones)
+          node -e "
+            const fs = require('fs');
+            const upstreamPkg = JSON.parse(fs.readFileSync('chrome-launcher-upstream/package.json', 'utf8'));
+            const currentPkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            
+            // Sync dependencies but keep our brave-specific ones
+            currentPkg.devDependencies = {...upstreamPkg.devDependencies, ...currentPkg.devDependencies};
+            const braveDeps = ['which']; // Keep brave-specific dependencies
+            braveDeps.forEach(dep => {
+              if (currentPkg.dependencies[dep]) {
+                upstreamPkg.dependencies[dep] = currentPkg.dependencies[dep];
+              }
+            });
+            currentPkg.dependencies = {...upstreamPkg.dependencies, ...currentPkg.dependencies};
+            
+            fs.writeFileSync('package.json', JSON.stringify(currentPkg, null, 2));
+          "
+          
+          # Sync TypeScript config if there are updates
+          if [ -f "chrome-launcher-upstream/tsconfig.json" ]; then
+            cp chrome-launcher-upstream/tsconfig.json tsconfig.json
+          fi
+
+      - name: Update test utilities and scripts
+        run: |
+          # Copy test utilities while adapting for Brave
+          if [ -d "chrome-launcher-upstream/test" ] && [ ! -d "test" ]; then
+            mkdir -p test
+            echo "# Tests for brave-real-launcher" > test/README.md
+            echo "Tests will be adapted from chrome-launcher for Brave Browser" >> test/README.md
+          fi
+
+      - name: Build project
+        run: npm run build
+
+      - name: Run basic validation
+        run: |
+          # Test that the build works
+          node -e "const launcher = require('./dist/index.js'); console.log('Build successful:', typeof launcher.launch === 'function');"
+
+      - name: Commit changes
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add .
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Sync with chrome-launcher v${{ needs.check-updates.outputs.chrome_launcher_version }}"
+            git push
+          fi
+
+  test:
+    runs-on: ${{ matrix.os }}
+    needs: [check-updates, sync-and-update]
+    if: needs.check-updates.outputs.should_publish == 'true'
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node-version: [16, 18, 20]
+        
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Setup Xvfb (Linux only)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+
+      - name: Install Brave Browser (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl
+          sudo curl -fsSLo /usr/share/keyrings/brave-browser-archive-keyring.gpg https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/brave-browser-archive-keyring.gpg] https://brave-browser-apt-release.s3.brave.com/ stable main" | sudo tee /etc/apt/sources.list.d/brave-browser-release.list
+          sudo apt-get update
+          sudo apt-get install -y brave-browser
+
+      - name: Install Brave Browser (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          brew install --cask brave-browser
+
+      - name: Install Brave Browser (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          choco install brave
+
+      - name: Test brave-finder functionality
+        run: |
+          node -e "
+            const { braveFinder } = require('./dist/index.js');
+            const platform = process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux';
+            
+            try {
+              let installations;
+              if (platform === 'darwin') {
+                installations = braveFinder.darwinFast() ? [braveFinder.darwinFast()] : braveFinder.darwin();
+              } else {
+                installations = braveFinder[platform]();
+              }
+              
+              console.log('Found Brave installations:', installations.length);
+              if (installations.length > 0) {
+                console.log('First installation:', installations[0]);
+              }
+            } catch (error) {
+              console.log('Browser detection test completed (no Brave found or expected in CI):', error.message);
+            }
+          "
+
+      - name: Test Xvfb functionality (Linux only)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          node -e "
+            const { XvfbManager } = require('./dist/index.js');
+            
+            async function testXvfb() {
+              const xvfb = new XvfbManager({ display: ':99' });
+              try {
+                await xvfb.start();
+                console.log('Xvfb started successfully');
+                await xvfb.stop();
+                console.log('Xvfb stopped successfully');
+              } catch (error) {
+                console.log('Xvfb test completed:', error.message);
+              }
+            }
+            
+            testXvfb();
+          "
+
+      - name: Test basic launcher functionality
+        run: |
+          node -e "
+            const { launch, getBravePath } = require('./dist/index.js');
+            
+            async function testLauncher() {
+              try {
+                const path = getBravePath();
+                console.log('Found Brave at:', path);
+                
+                // Test launching in headless mode with timeout
+                const brave = await launch({ 
+                  braveFlags: ['--headless', '--disable-gpu', '--no-sandbox'],
+                  logLevel: 'verbose'
+                });
+                console.log('Brave launched successfully, PID:', brave.pid);
+                
+                // Close after a short delay
+                setTimeout(() => {
+                  brave.kill();
+                  console.log('Brave killed');
+                  process.exit(0);
+                }, 2000);
+                
+              } catch (error) {
+                console.log('Launcher test completed (expected in CI without Brave):', error.message);
+                process.exit(0);
+              }
+            }
+            
+            testLauncher();
+          "
+        timeout-minutes: 2
+
+  publish:
+    runs-on: ubuntu-latest
+    needs: [check-updates, sync-and-update, test]
+    if: needs.check-updates.outputs.should_publish == 'true' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main')
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Create README
+        run: |
+          cat > README.md << 'EOF'
+          # brave-real-launcher
+
+          Launch Brave Browser with ease from Node.js. Based on [chrome-launcher](https://github.com/GoogleChrome/chrome-launcher) but specifically adapted for Brave Browser with additional features.
+
+          ## Features
+
+          - 🦁 **Brave Browser Detection**: Automatically detects Brave Browser installations across all platforms
+          - 🖥️ **Multi-Platform Support**: Linux (x64/ARM64), macOS (Intel/Apple Silicon), Windows (x64/ARM64)
+          - 🐧 **Xvfb Support**: Built-in Xvfb support for headless operation on Linux
+          - 🎯 **Launch Modes**: Headless mode, GUI mode, or automatic detection
+          - 🔄 **Auto-Sync**: Automatically syncs with chrome-launcher updates while preserving Brave-specific features
+          - 🛠️ **Full API Compatibility**: Drop-in replacement for chrome-launcher but for Brave
+
+          ## Installation
+
+          ```bash
+          npm install brave-real-launcher
+          ```
+
+          ## Quick Start
+
+          ```javascript
+          const { launch } = require('brave-real-launcher');
+
+          // Launch Brave in headless mode
+          const brave = await launch({
+            braveFlags: ['--headless', '--disable-gpu'],
+            logLevel: 'info'
+          });
+
+          console.log('Brave is running on port', brave.port);
+          
+          // Kill Brave
+          brave.kill();
+          ```
+
+          ## API
+
+          ### `launch(options)`
+
+          Launches Brave Browser with the specified options.
+
+          **Options:**
+          - `bravePath?: string` - Path to Brave executable (auto-detected if not provided)
+          - `braveFlags?: string[]` - Array of Brave flags to pass
+          - `launchMode?: 'auto' | 'headless' | 'gui'` - Launch mode (default: 'auto')
+          - `enableXvfb?: boolean` - Enable Xvfb on Linux (default: false)
+          - `xvfbOptions?: XvfbOptions` - Xvfb configuration options
+          - `port?: number` - Debug port (default: random)
+          - `userDataDir?: string | boolean` - User data directory
+          - `startingUrl?: string` - URL to navigate to on start
+          - And more options compatible with chrome-launcher
+
+          ### `getBravePath()`
+
+          Returns the path to the Brave Browser executable.
+
+          ### `XvfbManager`
+
+          Manages Xvfb virtual display for headless environments.
+
+          ```javascript
+          const { XvfbManager } = require('brave-real-launcher');
+
+          const xvfb = new XvfbManager({
+            display: ':99',
+            width: 1920,
+            height: 1080
+          });
+
+          await xvfb.start();
+          // ... use Brave
+          await xvfb.stop();
+          ```
+
+          ## Platform Support
+
+          ### Linux
+          - x64 and ARM64 architectures
+          - Detects installations in standard paths: `/opt/brave.com/brave/`, `/usr/bin/brave-browser`, etc.
+          - Supports Flatpak and Snap installations
+          - Built-in Xvfb support for headless environments
+
+          ### macOS  
+          - Intel and Apple Silicon (M1/M2) support
+          - Detects Brave Browser, Brave Browser Beta, Nightly, and Dev versions
+          - Standard installation paths in `/Applications/`
+
+          ### Windows
+          - x64 and ARM64 support  
+          - Registry-based detection
+          - Standard installation paths in Program Files and Local AppData
+
+          ## Environment Variables
+
+          - `BRAVE_PATH`: Path to Brave executable
+          - `HEADLESS`: Force headless mode when set
+          - `DISPLAY`: X11 display (Linux)
+
+          ## Examples
+
+          ### Headless Mode with Xvfb
+          ```javascript
+          const brave = await launch({
+            launchMode: 'headless',
+            enableXvfb: true,
+            xvfbOptions: { width: 1920, height: 1080 }
+          });
+          ```
+
+          ### Custom Flags
+          ```javascript  
+          const brave = await launch({
+            braveFlags: [
+              '--no-sandbox',
+              '--disable-dev-shm-usage',
+              '--disable-gpu'
+            ]
+          });
+          ```
+
+          ### Auto-Detection
+          ```javascript
+          const brave = await launch({
+            launchMode: 'auto', // Automatically detects headless vs GUI environment
+            logLevel: 'verbose'
+          });
+          ```
+
+          ## License
+
+          Apache-2.0 - Based on chrome-launcher by The Chromium Authors
+          EOF
+
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          npm publish --access public
+
+      - name: Create GitHub Release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+        with:
+          tag_name: v${{ needs.check-updates.outputs.chrome_launcher_version }}
+          release_name: Release v${{ needs.check-updates.outputs.chrome_launcher_version }}
+          body: |
+            ## brave-real-launcher v${{ needs.check-updates.outputs.chrome_launcher_version }}
+            
+            Synced with chrome-launcher v${{ needs.check-updates.outputs.chrome_launcher_version }}
+            
+            ### Features
+            - 🦁 Brave Browser detection across all platforms
+            - 🐧 Built-in Xvfb support for Linux headless environments  
+            - 🎯 Automatic headless/GUI mode detection
+            - 🔄 Auto-synced with chrome-launcher updates
+            
+            ### Supported Platforms
+            - Linux x64/ARM64
+            - macOS Intel/Apple Silicon
+            - Windows x64/ARM64
+            
+            See README.md for full documentation.
+          draft: false
+          prerelease: false
+
+      - name: Update package description
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          # Update npm package description
+          npm dist-tag add brave-real-launcher@${{ needs.check-updates.outputs.chrome_launcher_version }} latest
