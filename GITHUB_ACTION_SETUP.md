@@ -52,9 +52,16 @@ Value: {{your_npm_token}}
 
 ## 🚀 Workflow Features
 
+### 📈 Auto-increment Version Logic
+- **Smart Versioning**: हमेशा version increment होता है (1.2.0 → 1.2.1 → 1.2.2...)
+- **Chrome-launcher Sync**: Chrome-launcher के version के साथ intelligent sync
+- **Continuous Updates**: जब chrome-launcher version same हो तब भी patch increment
+- **Strategy Support**: Major, Minor, Patch, और Auto increment strategies
+
 ### Automatic Triggers
 - **Daily Check**: हर रोज सुबह 6 बजे UTC (11:30 AM IST)
 - **Push Trigger**: scripts या workflow files में changes पर
+- **Always Proceeds**: अब workflow हमेशा run होगी continuous updates के लिए
 
 ### Manual Triggers
 ```bash
@@ -101,6 +108,14 @@ Workflow को push करने से पहले local testing कर स�
 ```bash
 # Local validation script run करें
 node test-workflow-local.js
+
+# Version increment test करें
+node scripts/version-increment.cjs --dry-run
+node scripts/version-increment.cjs --dry-run --force
+node scripts/version-increment.cjs --dry-run --strategy=patch
+
+# Actually increment version
+node scripts/version-increment.cjs --force
 
 # Sync script manually test करें
 node scripts/chrome-launcher-sync.cjs latest

@@ -38,10 +38,13 @@ class ChromeLauncherSyncManager {
       // Step 5: Restore and enhance Brave features
       await this.restoreBraveFeatures();
       
-      // Step 6: Update configurations
+      // Step 6: Smart version increment
+      await this.incrementVersion();
+      
+      // Step 7: Update configurations
       await this.updateConfigurations();
       
-      // Step 7: Verify integration
+      // Step 8: Verify integration
       await this.verifyIntegration();
       
       console.log('\n🎉 Chrome-launcher sync completed successfully!');
@@ -252,6 +255,40 @@ class ChromeLauncherSyncManager {
         // Here you could add specific merging logic for each file
       }
     });
+  }
+
+  async incrementVersion() {
+    console.log('📦 Smart Version Increment...');
+    
+    try {
+      // Use version increment utility
+      const VersionManager = require('./version-increment.cjs');
+      const versionManager = new VersionManager();
+      
+      // Always increment with force flag for continuous updates
+      const result = await versionManager.run({ 
+        force: true, 
+        strategy: 'auto' 
+      });
+      
+      if (result.success && result.incremented) {
+        console.log(`  ✅ Version incremented: ${result.oldVersion} → ${result.newVersion}`);
+        console.log(`  📝 Reason: ${result.reason}`);
+        
+        // Update chrome version reference for consistency
+        if (result.newVersion !== this.chromeVersion) {
+          this.chromeVersion = result.newVersion;
+        }
+      } else {
+        console.log('  ℹ️ Version increment skipped');
+      }
+      
+    } catch (error) {
+      console.error('  ⚠️ Version increment warning:', error.message);
+      console.log('  🔄 Continuing with existing version...');
+    }
+    
+    console.log('✅ Version management completed');
   }
 
   async updateConfigurations() {

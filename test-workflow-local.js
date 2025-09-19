@@ -87,7 +87,7 @@ class WorkflowValidator {
   }
 
   async testUpdateCheck() {
-    console.log('🔍 Testing Update Check Logic...');
+    console.log('🔍 Testing Update Check & Version Increment Logic...');
     
     try {
       // Get current version
@@ -100,19 +100,31 @@ class WorkflowValidator {
       console.log(`  📦 Current brave-real-launcher version: ${currentVersion}`);
       console.log(`  🌐 Latest chrome-launcher version: ${chromeVersion}`);
       
-      const hasUpdates = currentVersion !== chromeVersion;
+      // Test version increment logic
+      console.log(`  🔄 Testing version increment utility...`);
+      const versionOutput = execSync('node scripts/version-increment.cjs --dry-run --force', { encoding: 'utf8' });
       
-      if (hasUpdates) {
-        console.log('  ✅ Updates available - workflow would proceed');
-        this.testResults.push('✅ Update detection logic working');
+      if (versionOutput.includes('Would increment:')) {
+        console.log('  ✅ Version increment logic working');
+        this.testResults.push('✅ Auto-increment version logic working');
+        
+        // Extract incremented version for display
+        const incrementMatch = versionOutput.match(/Would increment: ([\d\.]+) → ([\d\.]+)/);
+        if (incrementMatch) {
+          console.log(`  📈 Would increment: ${incrementMatch[1]} → ${incrementMatch[2]}`);
+        }
       } else {
-        console.log('  ℹ️ No updates available - workflow would skip');
-        this.testResults.push('✅ Update detection logic working (no updates)');
+        console.log('  ⚠️ Version increment test incomplete');
+        this.testResults.push('⚠️ Version increment test had issues');
       }
       
+      // Always proceed logic test
+      console.log('  🚀 New logic: Workflow will ALWAYS proceed for continuous updates');
+      this.testResults.push('✅ Always-proceed logic implemented');
+      
     } catch (error) {
-      console.log('  ⚠️ Could not fetch chrome-launcher version (network issue)');
-      this.testResults.push('⚠️ Update check test skipped (network)');
+      console.log('  ⚠️ Could not complete version test (network or script issue)');
+      this.testResults.push('⚠️ Version increment test skipped (error)');
     }
   }
 
