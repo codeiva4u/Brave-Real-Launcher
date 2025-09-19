@@ -244,117 +244,135 @@ jobs:
         npm audit --audit-level high || echo "⚠️ Some security issues found but continuing..."
         echo "✅ Security audit completed!"
 
-    # Step 10: Determine publish strategy
-    - name: 🎯 Determine Publish Strategy
-      id: publish-check
+    # Step 10: Smart Version Management & Publish Strategy
+    - name: 🔢 Smart Version Management
+      id: version-manager
       run: |
-        echo "🎯 Determining publish strategy..."
+        echo "🔢 Smart version management starting..."
         
+        # Get current status
         PUBLISH_MODE="${{ github.event.inputs.publish_mode || 'auto' }}"
-        SHOULD_PUBLISH="false"
-        REASON=""
+        SYNC_PERFORMED="${{ steps.sync-check.outputs.should_sync }}"
+        CHROME_VERSION="${{ steps.sync-check.outputs.chrome_version }}"
         
-        # Current और NPM version check करें with better error handling
+        # Current version from package.json
         CURRENT_VERSION=$(node -e "console.log(require('./package.json').version)")
         
+        # NPM published version
         echo "📎 Checking NPM registry..."
         NPM_VERSION=$(npm view brave-real-launcher version 2>/dev/null || echo "0.0.0")
         
-        # Handle npm registry errors
-        if [ "$NPM_VERSION" = "0.0.0" ]; then
-          echo "⚠️ Package not found on NPM or registry error - first publish"
-        else
-          echo "📦 Found published version on NPM: $NPM_VERSION"
-        fi
-        
+        echo "=== Version Status ==="
         echo "Local version: $CURRENT_VERSION"
         echo "NPM version: $NPM_VERSION"
+        echo "Chrome-launcher version: $CHROME_VERSION"
+        echo "Sync performed: $SYNC_PERFORMED"
+        echo "Publish mode: $PUBLISH_MODE"
         
-        # Version conflict check
-        if [ "$NPM_VERSION" != "0.0.0" ] && [ "$CURRENT_VERSION" = "$NPM_VERSION" ]; then
-          echo "⚠️ Version conflict detected: Local and NPM have same version"
-          echo "🔢 Will auto-increment if publishing is needed"
-        fi
+        # Smart version determination
+        NEW_VERSION=""
+        SHOULD_PUBLISH="false"
+        REASON=""
         
-        # Publish logic
         if [ "$PUBLISH_MODE" = "skip" ]; then
+          SHOULD_PUBLISH="false"
           REASON="Publish mode set to skip"
-        elif [ "$PUBLISH_MODE" = "force" ]; then
+          NEW_VERSION="$CURRENT_VERSION"
+        
+        elif [ "$SYNC_PERFORMED" = "true" ]; then
+          # Chrome-launcher sync हुआ है - use chrome version
+          NEW_VERSION="$CHROME_VERSION"
           SHOULD_PUBLISH="true"
-          REASON="Force publish requested"
-        elif [ "$PUBLISH_MODE" = "auto" ]; then
-          if [ "$CURRENT_VERSION" != "$NPM_VERSION" ]; then
-            # Only publish on main/master branch for auto mode
-            if [[ "${{ github.ref }}" == "refs/heads/main" || "${{ github.ref }}" == "refs/heads/master" ]]; then
+          REASON="Synced with chrome-launcher v$CHROME_VERSION"
+          
+          # Update package.json with chrome version
+          if [ "$NEW_VERSION" != "$CURRENT_VERSION" ]; then
+            echo "🔄 Updating package.json to chrome-launcher version: $NEW_VERSION"
+            npm version "$NEW_VERSION" --no-git-tag-version
+          fi
+        
+        else
+          # Regular update - सिर्फ main/master branch पर publish करें
+          if [[ "${{ github.ref }}" == "refs/heads/main" || "${{ github.ref }}" == "refs/heads/master" ]]; then
+            
+            if [ "$NPM_VERSION" = "0.0.0" ]; then
+              # First publish
+              NEW_VERSION="$CURRENT_VERSION"
               SHOULD_PUBLISH="true"
-              REASON="Version updated from $NPM_VERSION to $CURRENT_VERSION"
+              REASON="First publish"
             else
-              REASON="Version changed but not on main branch"
+              # Auto-increment करें अगर NPM version >= current version
+              if [ "$(printf '%s\n' "$NPM_VERSION" "$CURRENT_VERSION" | sort -V | tail -n1)" = "$NPM_VERSION" ]; then
+                # NPM version is same or newer, increment
+                echo "🔢 Auto-incrementing patch version..."
+                
+                # Parse NPM version and increment
+                IFS='.' read -r major minor patch <<< "$NPM_VERSION"
+                NEW_PATCH=$((patch + 1))
+                NEW_VERSION="${major}.${minor}.${NEW_PATCH}"
+                
+                echo "📈 Version increment: $NPM_VERSION → $NEW_VERSION"
+                
+                # Update package.json
+                npm version "$NEW_VERSION" --no-git-tag-version
+                
+                SHOULD_PUBLISH="true"
+                REASON="Auto-incremented from $NPM_VERSION to $NEW_VERSION"
+              else
+                # Current version is newer
+                NEW_VERSION="$CURRENT_VERSION"
+                SHOULD_PUBLISH="true"
+                REASON="Local version newer than NPM: $CURRENT_VERSION > $NPM_VERSION"
+              fi
             fi
+            
           else
-            REASON="No version change detected"
+            # Not on main branch
+            NEW_VERSION="$CURRENT_VERSION"
+            SHOULD_PUBLISH="false"
+            REASON="Not on main/master branch"
           fi
         fi
         
-        echo "should_publish=$SHOULD_PUBLISH" >> $GITHUB_OUTPUT
-        echo "reason=$REASON" >> $GITHUB_OUTPUT
-        echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
-        echo "npm_version=$NPM_VERSION" >> $GITHUB_OUTPUT
-        
-        echo "📋 Publish decision: $SHOULD_PUBLISH ($REASON)"
-
-    # Step 10.5: Smart Version Increment (if needed)
-    - name: 🔢 Smart Version Increment
-      id: version-increment
-      if: steps.publish-check.outputs.should_publish == 'true'
-      run: |
-        echo "🔢 Processing smart version increment..."
-        
-        CURRENT_VERSION="${{ steps.publish-check.outputs.current_version }}"
-        NPM_VERSION="${{ steps.publish-check.outputs.npm_version }}"
-        SYNC_PERFORMED="${{ steps.sync-check.outputs.should_sync }}"
-        
-        echo "Current version: $CURRENT_VERSION"
-        echo "NPM version: $NPM_VERSION"
-        echo "Sync performed: $SYNC_PERFORMED"
-        
-        # Version increment logic
-        if [ "$SYNC_PERFORMED" = "true" ]; then
-          # Chrome-launcher sync हुआ है, version पहले से updated है
-          NEW_VERSION="$CURRENT_VERSION"
-          echo "✅ Version already synced with chrome-launcher: $NEW_VERSION"
-        else
-          # Auto-increment patch version for regular updates
-          echo "🔢 Auto-incrementing patch version..."
-          
-          # Parse version components
-          IFS='.' read -r major minor patch <<< "$CURRENT_VERSION"
-          NEW_PATCH=$((patch + 1))
-          NEW_VERSION="${major}.${minor}.${NEW_PATCH}"
-          
-          echo "📈 Version increment: $CURRENT_VERSION → $NEW_VERSION"
-          
-          # Update package.json
-          npm version $NEW_VERSION --no-git-tag-version
-          
-          # Commit version change
-          git config user.name "🤖 Brave Version Bot"
-          git config user.email "action@github.com"
-          git add package.json package-lock.json
-          git commit -m "🔢 Auto-increment version to v$NEW_VERSION" || echo "No changes to commit"
-          git push || echo "Nothing to push"
-          
-          echo "✅ Version incremented and committed: $NEW_VERSION"
+        # Force publish override
+        if [ "$PUBLISH_MODE" = "force" ]; then
+          if [ -z "$NEW_VERSION" ] || [ "$NEW_VERSION" = "$CURRENT_VERSION" ]; then
+            # Force के लिए increment करें
+            IFS='.' read -r major minor patch <<< "$([ "$NPM_VERSION" != "0.0.0" ] && echo "$NPM_VERSION" || echo "$CURRENT_VERSION")"
+            NEW_PATCH=$((patch + 1))
+            NEW_VERSION="${major}.${minor}.${NEW_PATCH}"
+            npm version "$NEW_VERSION" --no-git-tag-version
+          fi
+          SHOULD_PUBLISH="true"
+          REASON="Force publish requested - v$NEW_VERSION"
         fi
         
-        echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
-        echo "version_incremented=$([ "$NEW_VERSION" != "$CURRENT_VERSION" ] && echo "true" || echo "false")" >> $GITHUB_OUTPUT
+        # Commit version changes if made
+        if [ "$NEW_VERSION" != "$CURRENT_VERSION" ]; then
+          echo "📁 Committing version change..."
+          git config user.name "🤖 Brave Version Manager"
+          git config user.email "action@github.com"
+          git add package.json package-lock.json
+          git commit -m "🔢 Version update: $CURRENT_VERSION → $NEW_VERSION" || echo "No changes to commit"
+          git push || echo "Nothing to push"
+        fi
+        
+        # Output results
+        echo "should_publish=$SHOULD_PUBLISH" >> $GITHUB_OUTPUT
+        echo "reason=$REASON" >> $GITHUB_OUTPUT
+        echo "final_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+        echo "version_changed=$([ "$NEW_VERSION" != "$CURRENT_VERSION" ] && echo "true" || echo "false")" >> $GITHUB_OUTPUT
+        
+        echo "=== Final Decision ==="
+        echo "📋 Should publish: $SHOULD_PUBLISH"
+        echo "📋 Final version: $NEW_VERSION"
+        echo "📋 Reason: $REASON"
 
     # Step 11: Publish to NPM
     - name: 🚀 Publish to NPM
-      if: steps.publish-check.outputs.should_publish == 'true'
+      if: steps.version-manager.outputs.should_publish == 'true'
       run: |
-        FINAL_VERSION="${{ steps.version-increment.outputs.new_version || steps.publish-check.outputs.current_version }}"
+        FINAL_VERSION="${{ steps.version-manager.outputs.final_version }}"
         echo "🚀 Publishing brave-real-launcher v$FINAL_VERSION to NPM..."
         
         # Verify we have NPM token
@@ -389,21 +407,20 @@ jobs:
         echo "=================================="
         echo "📋 Execution Summary:"
         echo "• Chrome-launcher version: ${{ steps.sync-check.outputs.chrome_version }}"
-        echo "• Original version: ${{ steps.publish-check.outputs.current_version }}"
-        echo "• Final version: ${{ steps.version-increment.outputs.new_version || steps.publish-check.outputs.current_version }}"
-        echo "• Version incremented: ${{ steps.version-increment.outputs.version_incremented || 'false' }}"
+        echo "• Final version: ${{ steps.version-manager.outputs.final_version }}"
+        echo "• Version changed: ${{ steps.version-manager.outputs.version_changed }}"
         echo "• Sync performed: ${{ steps.sync-check.outputs.should_sync }}"
         echo "• Sync mode: ${{ steps.sync-check.outputs.sync_mode }}"
-        echo "• Publish performed: ${{ steps.publish-check.outputs.should_publish }}"
-        echo "• Publish reason: ${{ steps.publish-check.outputs.reason }}"
+        echo "• Publish performed: ${{ steps.version-manager.outputs.should_publish }}"
+        echo "• Publish reason: ${{ steps.version-manager.outputs.reason }}"
         echo "• Build: ✅ Success"
         echo "• Tests: ✅ Passed" 
         echo "• Security: ✅ Checked"
         echo "=================================="
         
         # Set workflow status
-        if [ "${{ steps.publish-check.outputs.should_publish }}" = "true" ]; then
-          echo "🚀 Package published successfully!"
+        if [ "${{ steps.version-manager.outputs.should_publish }}" = "true" ]; then
+          echo "🚀 Package published successfully as v${{ steps.version-manager.outputs.final_version }}!"
         else
-          echo "📦 Package ready but not published (${{ steps.publish-check.outputs.reason }})"
+          echo "📦 Package ready but not published (${{ steps.version-manager.outputs.reason }})"
         fi
