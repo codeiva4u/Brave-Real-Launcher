@@ -14,7 +14,7 @@ import {DEFAULT_FLAGS} from './flags.js';
 import {makeTmpDir, defaults, delay, getPlatform, toWin32Path, InvalidUserDataDirectoryError, UnsupportedPlatformError, BraveNotInstalledError, XvfbManager, XvfbOptions, detectDesktopEnvironment} from './utils.js';
 import {ChildProcess} from 'child_process';
 import {spawn, spawnSync} from 'child_process';
-import log from 'lighthouse-logger';
+import log from './logger.js';
 
 const isWsl = getPlatform() === 'wsl';
 const isWindows = getPlatform() === 'win32';

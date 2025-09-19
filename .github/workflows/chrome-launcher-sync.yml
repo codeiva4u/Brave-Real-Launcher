@@ -1,9 +1,12 @@
 name: Chrome Launcher Sync & Publish
 
 on:
-  # Automatic trigger - daily check for updates
+  # Automatic triggers
   schedule:
-    - cron: '0 6 * * *'  # Daily at 6 AM UTC
+    # Weekly trigger (minimum requirement) - Every Monday at 6 AM UTC
+    - cron: '0 6 * * 1'  # Weekly Monday at 6 AM UTC (11:30 AM IST)
+    # Daily trigger (for frequent updates) - Every day at 6 AM UTC  
+    - cron: '0 6 * * *'  # Daily at 6 AM UTC (11:30 AM IST)
   
   # Manual trigger
   workflow_dispatch:

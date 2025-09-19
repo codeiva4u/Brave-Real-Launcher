@@ -14,7 +14,7 @@ import {DEFAULT_FLAGS} from './flags.js';
 import {makeTmpDir, defaults, delay, getPlatform, toWin32Path, InvalidUserDataDirectoryError, UnsupportedPlatformError, BraveNotInstalledError} from './utils.js';
 import {ChildProcess} from 'child_process';
 import {spawn, spawnSync} from 'child_process';
-import log from 'lighthouse-logger';
+import log from './logger.js';
 import {XvfbSupport, XvfbOptions} from './xvfb-support.js';
 
 const isWsl = getPlatform() === 'wsl';

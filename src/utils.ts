@@ -10,7 +10,7 @@ import childProcess from 'child_process';
 import {mkdirSync} from 'fs';
 import isWsl from 'is-wsl';
 import which from 'which';
-import log from 'lighthouse-logger';
+import log from './logger.js';
 
 export const enum LaunchErrorCodes {
   ERR_LAUNCHER_PATH_NOT_SET = 'ERR_LAUNCHER_PATH_NOT_SET',

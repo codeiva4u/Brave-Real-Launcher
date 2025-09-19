@@ -10,7 +10,7 @@ import path from 'path';
 import {homedir} from 'os';
 import {execSync} from 'child_process';
 import escapeRegExp from 'escape-string-regexp';
-import log from 'lighthouse-logger';
+import log from './logger.js';
 import which from 'which';
 
 import {getWSLLocalAppDataPath, toWSLPath, BravePathNotSetError} from './utils.js';

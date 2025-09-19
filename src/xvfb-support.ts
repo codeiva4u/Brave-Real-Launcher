@@ -8,7 +8,7 @@
 import * as childProcess from 'child_process';
 import * as fs from 'fs';
 import {getPlatform} from './utils.js';
-import log from 'lighthouse-logger';
+import log from './logger.js';
 
 export interface XvfbOptions {
   displayNum?: number;
