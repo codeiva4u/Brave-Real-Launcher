@@ -32,6 +32,8 @@
     "format": "echo \"Code formatted\"",
     "type-check": "tsc --noEmit",
     "prepublishOnly": "npm run build && npm run test:ci",
+    "sync-chrome-launcher": "node scripts/chrome-launcher-sync.cjs",
+    "sync-chrome-launcher:version": "node scripts/chrome-launcher-sync.cjs",
     "reset-link": "echo \"Link reset completed\""
   },
   "bin": {
