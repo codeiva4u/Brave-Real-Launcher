@@ -242,11 +242,59 @@ jobs:
         
         echo "📋 Publish decision: $SHOULD_PUBLISH ($REASON)"
 
+    # Step 10.5: Smart Version Increment (if needed)
+    - name: 🔢 Smart Version Increment
+      id: version-increment
+      if: steps.publish-check.outputs.should_publish == 'true'
+      run: |
+        echo "🔢 Processing smart version increment..."
+        
+        CURRENT_VERSION="${{ steps.publish-check.outputs.current_version }}"
+        NPM_VERSION="${{ steps.publish-check.outputs.npm_version }}"
+        SYNC_PERFORMED="${{ steps.sync-check.outputs.should_sync }}"
+        
+        echo "Current version: $CURRENT_VERSION"
+        echo "NPM version: $NPM_VERSION"
+        echo "Sync performed: $SYNC_PERFORMED"
+        
+        # Version increment logic
+        if [ "$SYNC_PERFORMED" = "true" ]; then
+          # Chrome-launcher sync हुआ है, version पहले से updated है
+          NEW_VERSION="$CURRENT_VERSION"
+          echo "✅ Version already synced with chrome-launcher: $NEW_VERSION"
+        else
+          # Auto-increment patch version for regular updates
+          echo "🔢 Auto-incrementing patch version..."
+          
+          # Parse version components
+          IFS='.' read -r major minor patch <<< "$CURRENT_VERSION"
+          NEW_PATCH=$((patch + 1))
+          NEW_VERSION="${major}.${minor}.${NEW_PATCH}"
+          
+          echo "📈 Version increment: $CURRENT_VERSION → $NEW_VERSION"
+          
+          # Update package.json
+          npm version $NEW_VERSION --no-git-tag-version
+          
+          # Commit version change
+          git config user.name "🤖 Brave Version Bot"
+          git config user.email "action@github.com"
+          git add package.json package-lock.json
+          git commit -m "🔢 Auto-increment version to v$NEW_VERSION" || echo "No changes to commit"
+          git push || echo "Nothing to push"
+          
+          echo "✅ Version incremented and committed: $NEW_VERSION"
+        fi
+        
+        echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+        echo "version_incremented=$([ "$NEW_VERSION" != "$CURRENT_VERSION" ] && echo "true" || echo "false")" >> $GITHUB_OUTPUT
+
     # Step 11: Publish to NPM
     - name: 🚀 Publish to NPM
       if: steps.publish-check.outputs.should_publish == 'true'
       run: |
-        echo "🚀 Publishing brave-real-launcher v${{ steps.publish-check.outputs.current_version }} to NPM..."
+        FINAL_VERSION="${{ steps.version-increment.outputs.new_version || steps.publish-check.outputs.current_version }}"
+        echo "🚀 Publishing brave-real-launcher v$FINAL_VERSION to NPM..."
         
         # Verify we have NPM token
         if [ -z "$NPM_TOKEN" ]; then
@@ -263,12 +311,12 @@ jobs:
           git config user.name "🤖 Brave Publish Bot"
           git config user.email "action@github.com"
           
-          TAG_NAME="v${{ steps.publish-check.outputs.current_version }}"
+          TAG_NAME="v$FINAL_VERSION"
           git tag "$TAG_NAME" || echo "Tag might already exist"
           git push origin "$TAG_NAME" || echo "Failed to push tag"
         fi
         
-        echo "🎉 Successfully published brave-real-launcher v${{ steps.publish-check.outputs.current_version }}!"
+        echo "🎉 Successfully published brave-real-launcher v$FINAL_VERSION!"
       env:
         NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -280,7 +328,9 @@ jobs:
         echo "=================================="
         echo "📋 Execution Summary:"
         echo "• Chrome-launcher version: ${{ steps.sync-check.outputs.chrome_version }}"
-        echo "• Our version: ${{ steps.publish-check.outputs.current_version }}"
+        echo "• Original version: ${{ steps.publish-check.outputs.current_version }}"
+        echo "• Final version: ${{ steps.version-increment.outputs.new_version || steps.publish-check.outputs.current_version }}"
+        echo "• Version incremented: ${{ steps.version-increment.outputs.version_incremented || 'false' }}"
         echo "• Sync performed: ${{ steps.sync-check.outputs.should_sync }}"
         echo "• Sync mode: ${{ steps.sync-check.outputs.sync_mode }}"
         echo "• Publish performed: ${{ steps.publish-check.outputs.should_publish }}"

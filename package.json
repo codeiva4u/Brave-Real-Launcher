@@ -3,12 +3,23 @@
   "version": "1.2.0",
   "description": "Launch Brave Browser with ease from node. Based on chrome-launcher with Brave-specific support.",
   "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
   "type": "commonjs",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./package.json": "./package.json"
+  },
   "engines": {
     "node": ">=12.13.0"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "npm run build:cjs && npm run build:esm",
+    "build:cjs": "tsc",
+    "build:esm": "tsc --module esnext --outDir dist-esm && node scripts/rename-esm.cjs",
     "dev": "tsc -w",
     "test": "node -e \"console.log('Running basic tests...'); require('./test/run-basic-tests.js')\"",
     "test:compatibility": "node -e \"console.log('✅ Compatibility check passed - Node version:', process.version)\"",
