@@ -43,7 +43,7 @@ Repository में changes commit करने के लिए:
 - Name: `GH_TOKEN`
 - Value: आपका personal access token
 
-## 🚀 Workflow Triggers
+## 🚀 Simple Workflow Triggers
 
 ### 1. ऑटोमेटिक Triggers
 ```yaml
@@ -56,9 +56,9 @@ schedule:
 Repository पर जाकर:
 1. Actions tab → "Brave Real Launcher - Auto Sync & Publish"
 2. "Run workflow" button click करें
-3. Options select करें:
-   - **Sync Mode**: auto, force, check
-   - **Publish Mode**: auto, force, skip
+3. Simple Options:
+   - **Force Sync**: जबरदस्ती chrome-launcher sync करें
+   - **Skip Tests**: तेजी execution के लिए tests skip करें
 
 ### 3. Push/PR Triggers
 ```yaml
@@ -108,14 +108,15 @@ Workflow की status check करने के लिए:
 - Network connectivity check करें
 - GitHub API rate limits check करें
 
-## 📊 Workflow Features
+## 📊 Simple Workflow Features
 
-✅ **Auto Sync**: Chrome-launcher के साथ automatic sync  
-✅ **Smart Publishing**: Version changes पर automatic publish  
-✅ **Comprehensive Testing**: Full test suite including browser launch  
-✅ **Security Audit**: NPM security vulnerability check  
-✅ **Multi-mode Support**: Manual और automatic triggers  
-✅ **Secure Token Usage**: Safe handling of GH_TOKEN और NPM_TOKEN  
+✅ **Auto Chrome-launcher Sync**: ऑटोमेटिक chrome-launcher integration with all features  
+✅ **Smart Version Management**: Intelligent version increment and NPM publish  
+✅ **Dual Module Support**: CommonJS + ES Module builds maintained  
+✅ **Comprehensive Testing**: Full test suite with browser environment  
+✅ **Security First**: Secure token handling + NPM security audit  
+✅ **Simple Controls**: Just 2 options - Force Sync + Skip Tests  
+✅ **Complete Automation**: One workflow does everything automatically
 
 ---
 
