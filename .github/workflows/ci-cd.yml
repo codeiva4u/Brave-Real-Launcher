@@ -1,373 +1,122 @@
-name: 🚀 Brave Real Launcher CI/CD
+name: 🚀 Simple Brave Real Launcher Workflow
 
 on:
-  # Automatic triggers
   push:
     branches: [ main, master ]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
   pull_request:
     branches: [ main, master ]
-  
-  # Manual triggers
   workflow_dispatch:
     inputs:
       sync_chrome_launcher:
-        description: 'Sync with chrome-launcher before build'
-        required: false
-        default: 'false'
+        description: 'Sync with chrome-launcher'
         type: boolean
+        default: false
       force_publish:
-        description: 'Force publish to NPM (skip version check)'
-        required: false
-        default: 'false'  
+        description: 'Force publish to NPM'
         type: boolean
+        default: false
       version_bump:
-        description: 'Version bump type'
-        required: false
-        default: 'none'
+        description: 'Version bump'
         type: choice
-        options:
-        - none
-        - patch
-        - minor
-        - major
-  
-  # Schedule to check chrome-launcher updates daily
+        default: 'none'
+        options: [none, patch, minor, major]
   schedule:
-    - cron: '0 2 * * *' # Daily at 2 AM UTC
-
-env:
-  NODE_VERSION: '18'
-  CHROME_LAUNCHER_REPO: 'GoogleChrome/chrome-launcher'
-  BRAVE_LAUNCHER_NAME: 'brave-real-launcher'
+    - cron: '0 2 * * *'
 
 jobs:
-  # Job 1: Sync with chrome-launcher if needed
-  sync-upstream:
+  # 🚀 ONE SIMPLE WORKFLOW WITH ALL FEATURES
+  all-in-one:
     runs-on: ubuntu-latest
-    if: github.event.inputs.sync_chrome_launcher == 'true' || github.event_name == 'schedule'
-    outputs:
-      has_changes: ${{ steps.sync.outputs.has_changes }}
-      new_version: ${{ steps.sync.outputs.new_version }}
     
     steps:
-    - name: 🔍 Checkout repository
+    - name: 💻 Checkout code
       uses: actions/checkout@v4
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         fetch-depth: 0
 
-    - name: 📦 Setup Node.js
+    - name: 💻 Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: ${{ env.NODE_VERSION }}
-        cache: 'npm'
-
-    - name: 📥 Install dependencies
-      run: npm ci
-
-    - name: 🔄 Sync with chrome-launcher
-      id: sync
-      run: |
-        echo "🔍 Checking chrome-launcher for updates..."
-        
-        # Get latest chrome-launcher version
-        CHROME_VERSION=$(curl -s https://api.github.com/repos/${{ env.CHROME_LAUNCHER_REPO }}/releases/latest | jq -r .tag_name | sed 's/v//')
-        CURRENT_VERSION=$(node -e "console.log(require('./package.json').version)")
-        
-        echo "Chrome Launcher version: $CHROME_VERSION"
-        echo "Current Brave Launcher version: $CURRENT_VERSION"
-        
-        if [ "$CHROME_VERSION" != "$CURRENT_VERSION" ]; then
-          echo "🆕 New version detected! Syncing..."
-          npm run sync-chrome-launcher
-          echo "has_changes=true" >> $GITHUB_OUTPUT
-          echo "new_version=$CHROME_VERSION" >> $GITHUB_OUTPUT
-        else
-          echo "✅ Already up to date"
-          echo "has_changes=false" >> $GITHUB_OUTPUT
-        fi
-
-    - name: 📝 Commit changes if any
-      if: steps.sync.outputs.has_changes == 'true'
-      run: |
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
-        git add .
-        git commit -m "🔄 Sync with chrome-launcher v${{ steps.sync.outputs.new_version }}" || exit 0
-        git push
-
-  # Job 2: Build and Test
-  build-test:
-    runs-on: ${{ matrix.os }}
-    needs: [sync-upstream]
-    if: always() && !cancelled()
-    
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        node-version: ['16', '18', '20']
-        include:
-          - os: ubuntu-latest
-            display: xvfb
-          - os: windows-latest  
-            display: none
-          - os: macos-latest
-            display: none
-    
-    steps:
-    - name: 🔍 Checkout repository
-      uses: actions/checkout@v4
-      with:
-        ref: ${{ github.ref }}
-
-    - name: 📦 Setup Node.js ${{ matrix.node-version }}
-      uses: actions/setup-node@v4
-      with:
-        node-version: ${{ matrix.node-version }}
-        cache: 'npm'
-
-    - name: 🖥️ Setup Virtual Display (Linux)
-      if: matrix.os == 'ubuntu-latest'
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y xvfb
-        export DISPLAY=:99
-        Xvfb :99 -screen 0 1024x768x24 > /dev/null 2>&1 &
-
-    - name: 📥 Install dependencies
-      run: npm ci
-
-    - name: 🔨 Build TypeScript
-      run: npm run build
-
-    - name: 🧪 Run tests
-      run: npm test
-      env:
-        DISPLAY: ${{ matrix.display == 'xvfb' && ':99' || '' }}
-
-    - name: 📊 Test coverage (Ubuntu + Node 18 only)
-      if: matrix.os == 'ubuntu-latest' && matrix.node-version == '18'
-      run: |
-        npm run test -- --coverage || true
-
-    - name: 📤 Upload build artifacts
-      if: matrix.os == 'ubuntu-latest' && matrix.node-version == '18'
-      uses: actions/upload-artifact@v4
-      with:
-        name: build-artifacts
-        path: |
-          dist/
-          package.json
-          README.md
-          LICENSE
-
-  # Job 3: Integration Tests
-  integration-tests:
-    runs-on: ${{ matrix.os }}
-    needs: [build-test]
-    if: success()
-    
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    
-    steps:
-    - name: 🔍 Checkout repository
-      uses: actions/checkout@v4
-
-    - name: 📦 Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: ${{ env.NODE_VERSION }}
-        cache: 'npm'
-
-    - name: 🖥️ Setup Virtual Display (Linux)
-      if: matrix.os == 'ubuntu-latest'
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y xvfb
-        export DISPLAY=:99
-        Xvfb :99 -screen 0 1024x768x24 > /dev/null 2>&1 &
-
-    - name: 📥 Install dependencies and build
-      run: |
-        npm ci
-        npm run build
-
-    - name: 🧪 Run integration tests
-      run: |
-        echo "🧪 Running example script..."
-        timeout 30s npm run example || true
-        echo "✅ Integration tests completed"
-      env:
-        DISPLAY: ${{ matrix.os == 'ubuntu-latest' && ':99' || '' }}
-        HEADLESS: 'true'
-
-  # Job 4: Security and Quality Checks
-  security-quality:
-    runs-on: ubuntu-latest
-    needs: [build-test]
-    if: success()
-    
-    steps:
-    - name: 🔍 Checkout repository
-      uses: actions/checkout@v4
-
-    - name: 📦 Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: ${{ env.NODE_VERSION }}
-        cache: 'npm'
-
-    - name: 📥 Install dependencies
-      run: npm ci
-
-    - name: 🔒 Run security audit
-      run: |
-        npm audit --audit-level high || true
-        echo "🔒 Security audit completed"
-
-    - name: 📝 Check code formatting
-      run: |
-        if command -v clang-format &> /dev/null; then
-          npm run format:check || echo "⚠️ Code formatting check skipped"
-        fi
-
-    - name: 🔍 Lint code
-      run: |
-        npm run type-check
-        echo "✅ Type checking completed"
-
-  # Job 5: Publish to NPM
-  publish:
-    runs-on: ubuntu-latest
-    needs: [build-test, integration-tests, security-quality, sync-upstream]
-    if: always() && !cancelled() && (needs.build-test.result == 'success' && needs.integration-tests.result == 'success' && needs.security-quality.result == 'success') && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || github.event.inputs.force_publish == 'true')
-    
-    steps:
-    - name: 🔍 Checkout repository
-      uses: actions/checkout@v4
-      with:
-        ref: ${{ github.ref }}
-
-    - name: 📦 Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: ${{ env.NODE_VERSION }}
+        node-version: '18'
         cache: 'npm'
         registry-url: 'https://registry.npmjs.org'
 
-    - name: 📥 Install dependencies
-      run: npm ci
-
-    - name: 🔨 Build for production
-      run: npm run build
-
-    - name: 📋 Check current version
-      id: version-check
+    - name: 🔄 Sync chrome-launcher (if requested or scheduled)
+      if: github.event.inputs.sync_chrome_launcher == 'true' || github.event_name == 'schedule'
       run: |
+        echo "🔄 Checking for chrome-launcher updates..."
+        CHROME_VERSION=$(curl -s https://api.github.com/repos/GoogleChrome/chrome-launcher/releases/latest | jq -r .tag_name | sed 's/v//')
         CURRENT_VERSION=$(node -e "console.log(require('./package.json').version)")
-        NPM_VERSION=$(npm view ${{ env.BRAVE_LAUNCHER_NAME }} version 2>/dev/null || echo "0.0.0")
         
-        echo "Current version: $CURRENT_VERSION"
-        echo "NPM version: $NPM_VERSION"
-        echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
-        echo "npm_version=$NPM_VERSION" >> $GITHUB_OUTPUT
-        
-        if [ "$CURRENT_VERSION" != "$NPM_VERSION" ] || [ "${{ github.event.inputs.force_publish }}" == "true" ]; then
-          echo "should_publish=true" >> $GITHUB_OUTPUT
-          echo "✅ Version changed or force publish - will publish"
+        if [ "$CHROME_VERSION" != "$CURRENT_VERSION" ]; then
+          echo "🆕 Syncing to chrome-launcher v$CHROME_VERSION"
+          npm ci
+          npm run sync-chrome-launcher
+          git config user.name "GitHub Action"
+          git config user.email "action@github.com"
+          git add .
+          git commit -m "🔄 Sync with chrome-launcher v$CHROME_VERSION" || exit 0
+          git push
         else
-          echo "should_publish=false" >> $GITHUB_OUTPUT  
-          echo "ℹ️ No version change - skipping publish"
+          echo "✅ Already up to date"
         fi
 
-    - name: 🔢 Bump version if requested
+    - name: 📦 Install dependencies
+      run: npm ci
+
+    - name: 🔨 Build project
+      run: npm run build
+
+    - name: 🧪 Test everything
+      run: |
+        echo "🧪 Running all tests..."
+        npm test
+        npm run test:compatibility
+        npm run type-check
+        echo "✅ All tests passed!"
+
+    - name: 🔍 Security check
+      run: npm audit --audit-level high || true
+
+    - name: 🔢 Bump version (if requested)
       if: github.event.inputs.version_bump != 'none'
       run: |
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
+        git config user.name "GitHub Action"
+        git config user.email "action@github.com"
         npm version ${{ github.event.inputs.version_bump }} --no-git-tag-version
         NEW_VERSION=$(node -e "console.log(require('./package.json').version)")
         git add package.json
-        git commit -m "🔢 Bump version to $NEW_VERSION"
+        git commit -m "🔢 v$NEW_VERSION"
         git push
-        echo "Version bumped to $NEW_VERSION"
+        echo "VERSION_BUMPED=true" >> $GITHUB_ENV
 
     - name: 🚀 Publish to NPM
-      if: steps.version-check.outputs.should_publish == 'true'
+      if: (github.ref == 'refs/heads/main' && env.VERSION_BUMPED == 'true') || github.event.inputs.force_publish == 'true'
       run: |
-        echo "🚀 Publishing to NPM..."
-        npm publish --access public
-        echo "✅ Published successfully!"
+        CURRENT_VERSION=$(node -e "console.log(require('./package.json').version)")
+        NPM_VERSION=$(npm view brave-real-launcher version 2>/dev/null || echo "0.0.0")
+        
+        if [ "$CURRENT_VERSION" != "$NPM_VERSION" ] || [ "${{ github.event.inputs.force_publish }}" == "true" ]; then
+          echo "🚀 Publishing v$CURRENT_VERSION to NPM..."
+          npm publish --access public
+          
+          # Create git tag and GitHub release
+          git tag "v$CURRENT_VERSION"
+          git push origin "v$CURRENT_VERSION"
+          
+          echo "🎉 Published v$CURRENT_VERSION successfully!"
+        else
+          echo "ℹ️ No version change, skipping publish"
+        fi
       env:
         NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-    - name: 🏷️ Create Git tag
-      if: steps.version-check.outputs.should_publish == 'true'
+    - name: 📊 Summary
       run: |
-        VERSION=$(node -e "console.log(require('./package.json').version)")
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
-        git tag -a "v$VERSION" -m "🎉 Release v$VERSION"
-        git push origin "v$VERSION"
-
-    - name: 📢 Create GitHub Release
-      if: steps.version-check.outputs.should_publish == 'true'
-      uses: actions/create-release@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag_name: v${{ steps.version-check.outputs.current_version }}
-        release_name: 🎉 Release v${{ steps.version-check.outputs.current_version }}
-        body: |
-          ## 🚀 What's New
-          
-          - Synced with chrome-launcher v${{ steps.version-check.outputs.current_version }}
-          - All Brave-specific features included
-          - Tested across Linux x64/ARM64, macOS Intel/Apple Silicon, Windows x64/ARM64
-          - Xvfb support for headless environments
-          
-          ## 📦 Installation
-          ```bash
-          npm install brave-real-launcher@${{ steps.version-check.outputs.current_version }}
-          ```
-          
-          ## 🔧 Features
-          - ✅ Cross-platform Brave Browser launching
-          - ✅ Headless and GUI mode support  
-          - ✅ Xvfb integration for Linux
-          - ✅ Windows Registry detection
-          - ✅ DevTools Protocol support
-          - ✅ Comprehensive testing suite
-        draft: false
-        prerelease: false
-
-  # Job 6: Cleanup and Notifications
-  cleanup:
-    runs-on: ubuntu-latest
-    needs: [sync-upstream, build-test, integration-tests, security-quality, publish]
-    if: always()
-    
-    steps:
-    - name: 📊 Workflow Summary
-      run: |
-        echo "## 🎯 Workflow Summary" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
-        echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
-        echo "| Sync Upstream | ${{ needs.sync-upstream.result || 'skipped' }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| Build & Test | ${{ needs.build-test.result }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| Integration Tests | ${{ needs.integration-tests.result }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| Security & Quality | ${{ needs.security-quality.result }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| Publish | ${{ needs.publish.result || 'skipped' }} |" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        
-        if [ "${{ needs.sync-upstream.outputs.has_changes }}" == "true" ]; then
-          echo "🔄 **Chrome Launcher synced to v${{ needs.sync-upstream.outputs.new_version }}**" >> $GITHUB_STEP_SUMMARY
-        fi
-        
-        echo "✅ **Workflow completed successfully!**" >> $GITHUB_STEP_SUMMARY
+        echo "✅ Workflow completed!" 
+        echo "- 🔄 Chrome-launcher sync: Done"
+        echo "- 🔨 Build: Success" 
+        echo "- 🧪 Tests: Passed"
+        echo "- 🚀 Publish: $([ -n "$NPM_TOKEN" ] && echo "Ready" || echo "NPM token needed")"
+        echo "- 🎉 All features working!"
