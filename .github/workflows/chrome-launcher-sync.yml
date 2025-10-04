@@ -300,6 +300,11 @@ jobs:
           echo "Package: ${{ steps.version_check.outputs.package_name }}"
           echo "Version: ${{ steps.version_check.outputs.package_version }}"
 
+      - name: Configure Git for Tag Creation
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+      
       - name: Create Git Tag
         id: create_tag
         run: |
